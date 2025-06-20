@@ -12,17 +12,29 @@ def create_tool_node_with_fallback(tools: list) -> dict:
 
 def handle_tool_error(state) -> dict:
     error = state.get("error")
-    print(f"error: {error}")
+    retry_count = state.get("api_retry_count", 0)
+    
+    if retry_count >= 2:
+        return {
+            "messages": [
+                ToolMessage(
+                    content="API call failed multiple times. Concluding the conversation.",
+                    tool_call_id=state["messages"][-1].tool_calls[0]["id"],
+                )
+            ],
+            "process_complete": True    
+        }
+    
     tool_calls = state["messages"][-1].tool_calls
     return {
         "messages": [
             ToolMessage(
                 content=f"Error: {repr(error)}\n please fix your mistakes.",
-                # content="Continue",
                 tool_call_id=tc["id"],
             )
             for tc in tool_calls
-        ]
+        ],
+        "api_retry_count": retry_count + 1
     }
 
 def _print_event(event: dict, _printed: set, max_length=1500):
@@ -78,12 +90,13 @@ def check_payload_completeness(state) -> bool:
     
     # Required fields that should differ from example
     required_checks = [
-        claim["claim_id"] != example_json["claim_id"],
+        # claim["claim_id"] != example_json["claim_id"],
         claim["policy"]["number"] != example_json["policy"]["number"],
         claim["insured"]["full_name"] != example_json["insured"]["full_name"],
-        claim["incident"]["description"] != example_json["incident"]["description"],
+        claim["incident"]["datetime"] != example_json["incident"]["datetime"],
         claim["incident"]["location"]["city"] != example_json["incident"]["location"]["city"],
-        claim["incident"]["location"]["state"] != example_json["incident"]["location"]["state"]
+        claim["incident"]["location"]["state"] != example_json["incident"]["location"]["state"],
+        claim["incident"]["vehicles_involved"] != example_json["incident"]["vehicles_involved"]
     ]
     
     return all(required_checks)

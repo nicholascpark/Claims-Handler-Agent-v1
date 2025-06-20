@@ -26,10 +26,13 @@ def get_preliminary_estimate(payload: FNOLPayload) -> str:
     else:
         request_body = payload
     
-    # make the POST request to the API
-    response = requests.post(
-        "http://localhost:8000/submit-loss-notice",
-        json=request_body
-    )
-    return response.json()
+    # make the POST request to the API with try except
+    try:
+        response = requests.post(
+            "http://localhost:8000/submit-loss-notice",
+            json=request_body
+        )
+        return response.json()
+    except Exception as e:
+        return f"Error: {e}"
 

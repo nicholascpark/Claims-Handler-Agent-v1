@@ -54,11 +54,11 @@ class Agent:
                 break
         
         # Check if there's a proper API response in the recent messages
-        # process_complete = self._check_for_api_response(state["messages"])
+        api_call_successful = self._check_for_api_response(state["messages"])
         
         return {
             "messages": [result],
-            # "process_complete": process_complete
+            "api_call_successful": api_call_successful
         }
     
     def _check_for_api_response(self, messages):

@@ -15,6 +15,8 @@ from src.builder import create_graph
 from src.schema import example_json, FNOLPayload
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from src.state import ConvoState
+
 class IntactBotUI:
     def __init__(self):
         self.graph = create_graph()
@@ -26,13 +28,15 @@ class IntactBotUI:
         }
         self.conversation_history = []
         self.current_payload = FNOLPayload(claim=example_json)
+        self.is_form_complete = False
         self.is_processing = False
         
         # Initialize with empty state
         initial_human_message = HumanMessage(content=".")
-        self.initial_state = {
+        self.initial_state: ConvoState = {
             "messages": [initial_human_message],
-            "payload": self.current_payload
+            "payload": self.current_payload,
+            "is_form_complete": self.is_form_complete,
         }
         
         # Get initial AI message
@@ -53,10 +57,10 @@ class IntactBotUI:
         except Exception:
             return [{"role": "assistant", "content": "Hello! I'm here to help you process your First Notice of Loss claim. Please share the details of your claim."}]
     
-    def process_message(self, message: str, history: List[List[str]]) -> Tuple[List[List[str]], str]:
-        """Process user message and return updated chat history and payload"""
+    def process_message(self, message: str, history: List[List[str]]) -> Tuple[List[List[str]], str, bool]:
+        """Process user message and return updated chat history, payload, and form completion status"""
         if not message.strip():
-            return history, self.format_payload()
+            return history, self.format_payload(), self.is_form_complete
         
         self.is_processing = True
         
@@ -84,6 +88,10 @@ class IntactBotUI:
                 if "payload" in event and event["payload"]:
                     self.current_payload = event["payload"]
                     self.initial_state["payload"] = self.current_payload
+                
+                # Update form complete status
+                if "is_form_complete" in event:
+                    self.is_form_complete = event["is_form_complete"]
             
             # Update history with agent response
             if agent_response:
@@ -95,7 +103,7 @@ class IntactBotUI:
             history[-1][1] = f"Error: {str(e)}"
         
         self.is_processing = False
-        return history, self.format_payload()
+        return history, self.format_payload(), self.is_form_complete
     
     def format_payload(self) -> str:
         """Format the current payload for display"""
@@ -108,7 +116,7 @@ class IntactBotUI:
         except Exception as e:
             return f"Error formatting payload: {str(e)}"
     
-    def reset_conversation(self):
+    def reset_conversation(self) -> Tuple[List[Dict[str, str]], str, bool]:
         """Reset the conversation and payload"""
         self.thread_id = str(uuid.uuid4())
         self.config = {
@@ -118,15 +126,17 @@ class IntactBotUI:
         }
         self.conversation_history = []
         self.current_payload = FNOLPayload(claim=example_json)
+        self.is_form_complete = False
         
         initial_human_message = HumanMessage(content=".")
-        self.initial_state = {
+        self.initial_state: ConvoState = {
             "messages": [initial_human_message],
-            "payload": self.current_payload
+            "payload": self.current_payload,
+            "is_form_complete": self.is_form_complete,
         }
         
         self.initial_chat_history = self._get_initial_message()
-        return self.initial_chat_history, self.format_payload()
+        return self.initial_chat_history, self.format_payload(), self.is_form_complete
 
 def get_logo_data_uri():
     """Convert logo to base64 data URI"""
@@ -217,6 +227,23 @@ def create_ui():
     """
     
     with gr.Blocks(css=custom_css, title="IntactBot - First Notice of Loss Agent") as demo:
+        # Helper functions for dynamic UI updates
+        def create_payload_header(is_complete: bool) -> str:
+            if is_complete:
+                return "<h3>📋 Real-time Payload ✅ (Form is Complete)</h3>"
+            else:
+                return "<h3>📋 Real-time Payload</h3>"
+
+        def create_info_panel(is_complete: bool) -> str:
+            background_color = "#e6ffed" if is_complete else "#f0f7ff"
+            return f"""
+            <div style="margin-top: 10px; padding: 10px; background: {background_color}; border-radius: 5px; font-size: 12px;">
+                <strong>ℹ️ Payload Information:</strong><br>
+                This panel shows the real-time state of the claim data being processed by the LangGraph agent.
+                The payload updates automatically as the conversation progresses.
+            </div>
+            """
+
         # Create logo HTML with fallback
         if logo_uri:
             logo_html = f'<img src="{logo_uri}" alt="IntactBot Logo" style="max-height: 80px;">'
@@ -265,7 +292,7 @@ def create_ui():
             
             # Right side - Payload display
             with gr.Column(scale=1):
-                gr.HTML("<h3>📋 Real-time Payload</h3>")
+                payload_header = gr.HTML(create_payload_header(bot.is_form_complete))
                 
                 payload_display = gr.Code(
                     value=bot.format_payload(),
@@ -275,65 +302,67 @@ def create_ui():
                     interactive=False
                 )
                 
-                gr.HTML("""
-                <div style="margin-top: 10px; padding: 10px; background: #f0f7ff; border-radius: 5px; font-size: 12px;">
-                    <strong>ℹ️ Payload Information:</strong><br>
-                    This panel shows the real-time state of the claim data being processed by the LangGraph agent.
-                    The payload updates automatically as the conversation progresses.
-                </div>
-                """)
+                info_panel = gr.HTML(create_info_panel(bot.is_form_complete))
         
         def send_message(message, history):
+            """Process user message and stream updates to the UI."""
             if not message.strip():
-                return history, "", bot.format_payload(), "🤖 Processing your message..."
-            
-            # Show loading indicator
-            loading_msg = "🤖 Processing your message..."
-            
+                yield history, "", bot.format_payload(), "", create_payload_header(bot.is_form_complete), create_info_panel(bot.is_form_complete)
+                return
+
+            # Append user message to history for immediate display
+            history.append({"role": "user", "content": message})
+            yield history, "", bot.format_payload(), "🤖 Processing...", create_payload_header(bot.is_form_complete), create_info_panel(bot.is_form_complete)
+
             # Convert history to the old format for processing
+            # We need to use the history *before* adding the new user message
+            # because process_message adds it internally.
             old_format_history = []
-            if history:
-                for msg in history:
+            if history[:-1]:  # Exclude the last user message
+                for msg in history[:-1]:
                     if msg.get('role') == 'user':
                         old_format_history.append([msg['content'], None])
                     elif msg.get('role') == 'assistant' and old_format_history:
-                        old_format_history[-1][1] = msg['content']
-            
+                        # Ensure we don't append to a non-existent list
+                        if old_format_history:
+                            old_format_history[-1][1] = msg['content']
+
             # Process the message
-            updated_history, updated_payload = bot.process_message(message, old_format_history)
+            updated_history_old, updated_payload, is_form_complete = bot.process_message(message, old_format_history)
             
-            # Convert back to new message format and preserve initial message
+            # Convert back to new message format
             new_format_history = []
+            # Preserve initial AI message if it exists
             if history and history[0].get('role') == 'assistant':
-                new_format_history.append(history[0])  # Preserve initial AI message
+                new_format_history.append(history[0])
             
-            for user_msg, assistant_msg in updated_history:
+            for user_msg, assistant_msg in updated_history_old:
                 new_format_history.append({"role": "user", "content": user_msg})
                 if assistant_msg:
                     new_format_history.append({"role": "assistant", "content": assistant_msg})
             
-            return new_format_history, "", updated_payload, ""
+            yield new_format_history, "", updated_payload, "", create_payload_header(is_form_complete), create_info_panel(is_form_complete)
         
         def clear_chat():
-            cleared_history, cleared_payload = bot.reset_conversation()
-            return [], cleared_payload, ""
+            cleared_history, cleared_payload, is_form_complete = bot.reset_conversation()
+            return cleared_history, cleared_payload, "", create_payload_header(is_form_complete), create_info_panel(is_form_complete)
         
         # Event handlers
         send_btn.click(
             send_message,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, msg_input, payload_display, loading_indicator]
+            outputs=[chatbot, msg_input, payload_display, loading_indicator, payload_header, info_panel]
         )
         
         msg_input.submit(
             send_message,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, msg_input, payload_display, loading_indicator]
+            outputs=[chatbot, msg_input, payload_display, loading_indicator, payload_header, info_panel]
         )
         
         clear_btn.click(
             clear_chat,
-            outputs=[chatbot, payload_display, loading_indicator]
+            outputs=[chatbot, payload_display, loading_indicator, payload_header, info_panel]
         )
     
     return demo
