@@ -1,57 +1,59 @@
 from langchain_core.runnables import Runnable, RunnableConfig
 from src.schema import FNOLPayload
 from config.settings import settings
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from trustcall import create_extractor
 from src.state import ConvoState
 from dotenv import load_dotenv
 from src.prompts import primary_assistant_prompt
 from src.tools import get_preliminary_estimate
-from src.utils import check_payload_completeness
-import httpx
-import ssl
+from src.utils import check_payload_completeness, create_llm
+
+# Lazy imports for better performance
+def _get_ssl_context():
+    """Lazy import SSL context to avoid loading unless needed"""
+    try:
+        import ssl
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        return ssl_context
+    except ImportError:
+        return None
+
+def _get_custom_httpx_client():
+    """Lazy import and create custom httpx client"""
+    try:
+        import httpx
+        return httpx.Client(
+            verify=False,
+            timeout=httpx.Timeout(60.0)
+        )
+    except ImportError:
+        return None
 
 load_dotenv()
 
 # Create custom httpx client with SSL verification disabled for corporate networks
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
+# ssl_context = ssl.create_default_context()
+# ssl_context.check_hostname = False
+# ssl_context.verify_mode = ssl.CERT_NONE
 
-custom_httpx_client = httpx.Client(
-    verify=False,
-    timeout=httpx.Timeout(60.0)
-)
+# custom_httpx_client = httpx.Client(
+#     verify=False,
+#     timeout=httpx.Timeout(60.0)
+# )
 
-# Configure ChatOpenAI clients with SSL workaround
-llm_agent = ChatOpenAI(
-    model=settings.MODEL_NAME, 
-    temperature=settings.TEMPERATURE,
-    http_client=custom_httpx_client
-)
-llm_extractor = ChatOpenAI(
-    model=settings.MODEL_NAME, 
-    temperature=settings.TEMPERATURE,
-    http_client=custom_httpx_client
-)
+# Use cached LLM instances for better performance
+llm_agent = create_llm()
+llm_extractor = create_llm(azure_compatible=True)
 
 class Agent:
     def __init__(self, runnable: Runnable):
         self.runnable = runnable
 
-    def __call__(self, state: ConvoState, config: RunnableConfig):
-        while True:
-            result = self.runnable.invoke(state)
-            # print(result.tool_calls)
-            if not result.tool_calls and (
-                not result.content
-                or isinstance(result.content, list)
-                and not result.content[0].get("text")
-            ):
-                messages = state["messages"] + [("user", "Respond with a real output.")]
-                state = {**state, "messages": messages}
-            else:
-                break
+    async def __call__(self, state: ConvoState, config: RunnableConfig):
+        result = await self.runnable.ainvoke(state)
         
         # Check if there's a proper API response in the recent messages
         api_call_successful = self._check_for_api_response(state["messages"])
@@ -85,7 +87,7 @@ class Extractor:
         self.llm_extractor = llm_extractor
         self.runnable = create_extractor(self.llm_extractor, tools=tools, enable_inserts=True)
 
-    def __call__(self, state: ConvoState, config: RunnableConfig):
+    async def __call__(self, state: ConvoState, config: RunnableConfig):
         # Store current payload for comparison
         payload_before = state.get("payload")
         
@@ -96,16 +98,15 @@ class Extractor:
             existing_data = {"FNOLPayload": payload_before.model_dump()}
         
         # Prepare the input for trustcall with existing data
-        trustcall_input = {
-            "messages": state["messages"],
-        }
-        
+        recent_messages = state["messages"][-5:] 
+        trustcall_input = {"messages": recent_messages}
+
         # Add existing data if we have it
         if existing_data:
             trustcall_input["existing"] = existing_data
         
         # Invoke trustcall extractor
-        result = self.runnable.invoke(trustcall_input)
+        result = await self.runnable.ainvoke(trustcall_input)
         
         # print('\n Trustcall Result: ', result)
         # print('\nResponse metadata: ', result.get("response_metadata", []))

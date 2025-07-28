@@ -7,15 +7,13 @@ graph TD;
 	__start__([<p>__start__</p>]):::first
 	agent(agent)
 	extractor(extractor)
-	tools(tools)
+	API-tool(API-tool)
 	__end__([<p>__end__</p>]):::last
+	API-tool --> extractor;
 	__start__ --> agent;
+	agent -. &nbsp;tools&nbsp; .-> API-tool;
 	agent -. &nbsp;__end__&nbsp; .-> extractor;
-	agent -.-> tools;
-	extractor -.-> __end__;
-	extractor -.-> agent;
-	tools --> agent;
-	agent -.-> __end__;
+	extractor --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

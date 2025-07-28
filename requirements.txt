@@ -1,8 +1,37 @@
+# Core AI/ML Dependencies (order matters for faster installs)
 trustcall
+langchain-core
 langchain
 langchain-openai
 langgraph
-langsmith
 pydantic>=2.0.0
+
+# Environment and Configuration
 python-dotenv>=1.0.0
-httpx 
+
+# HTTP and Network
+httpx
+aiohttp
+requests==2.32.3
+urllib3==2.2.2
+certifi==2024.7.4
+
+# LangSmith (optional for tracing)
+langsmith
+
+# UI Framework
+gradio
+
+# Audio Processing (optional for voice features)
+sounddevice
+scipy
+
+# Geolocation
+pgeocode
+
+# System Dependencies
+charset-normalizer==3.3.2
+colorama==0.4.6
+
+# Windows-specific (conditional install)
+pywin32==306; sys_platform == "win32"

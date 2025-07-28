@@ -7,6 +7,8 @@ import sys
 import os
 import base64
 from typing import Dict, Any, List, Generator, Tuple
+import asyncio
+from functools import lru_cache
 
 # Add the parent directory to the path to import from src
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,9 +32,11 @@ class IntactBotUI:
         self.current_payload = FNOLPayload(claim=example_json)
         self.is_form_complete = False
         self.is_processing = False
+        self._cached_payload_str = None  # Cache for formatted payload
+        self._payload_hash = None  # Hash to detect payload changes
         
         # Initialize with empty state
-        initial_human_message = HumanMessage(content=".")
+        initial_human_message = HumanMessage(content=" ")
         self.initial_state: ConvoState = {
             "messages": [initial_human_message],
             "payload": self.current_payload,
@@ -40,24 +44,32 @@ class IntactBotUI:
         }
         
         # Get initial AI message
-        self.initial_chat_history = self._get_initial_message()
+        self.initial_chat_history = asyncio.run(self._get_initial_message())
     
-    def _get_initial_message(self) -> List[Dict[str, str]]:
-        """Get the initial AI message by sending a '.' to start the conversation"""
+    async def _get_initial_message(self) -> List[Dict[str, str]]:
+        """Get the initial AI message by streaming the initial state with a whitespace message."""
         try:
-            events = self.graph.stream(self.initial_state, self.config, stream_mode="values")
+            events = self.graph.astream(self.initial_state, self.config, stream_mode="values")
             
-            for event in events:
+            async for event in events:
                 if "messages" in event and event["messages"]:
                     last_message = event["messages"][-1]
-                    if hasattr(last_message, 'content') and last_message.content != ".":
+                    if hasattr(last_message, 'content') and last_message.content.strip():
                         return [{"role": "assistant", "content": last_message.content}]
             
             return [{"role": "assistant", "content": "Hello! I'm here to help you process your First Notice of Loss claim. Please share the details of your claim."}]
-        except Exception:
+        except Exception as e:
+            print(f"Error getting initial message: {e}")
             return [{"role": "assistant", "content": "Hello! I'm here to help you process your First Notice of Loss claim. Please share the details of your claim."}]
     
-    def process_message(self, message: str, history: List[List[str]]) -> Tuple[List[List[str]], str, bool]:
+    def _compute_payload_hash(self) -> str:
+        """Compute a hash of the current payload for change detection."""
+        if self.current_payload:
+            payload_str = str(self.current_payload.model_dump()) if hasattr(self.current_payload, 'model_dump') else str(self.current_payload)
+            return str(hash(payload_str))
+        return "empty"
+    
+    async def process_message(self, message: str, history: List[List[str]]) -> Tuple[List[List[str]], str, bool]:
         """Process user message and return updated chat history, payload, and form completion status"""
         if not message.strip():
             return history, self.format_payload(), self.is_form_complete
@@ -71,13 +83,14 @@ class IntactBotUI:
         
         try:
             # Update state with user input
-            self.initial_state["messages"].append(HumanMessage(content=message))
+            # self.initial_state["messages"].append(HumanMessage(content=message))
             
             # Stream events from the graph
-            events = self.graph.stream(self.initial_state, self.config, stream_mode="values")
+            # events = self.graph.stream(self.initial_state, self.config, stream_mode="values")
+            events = self.graph.astream({"messages": [HumanMessage(content=message)]}, self.config, stream_mode="values")
             
             agent_response = ""
-            for event in events:
+            async for event in events:
                 # Extract agent response from messages
                 if "messages" in event and event["messages"]:
                     last_message = event["messages"][-1]
@@ -88,6 +101,9 @@ class IntactBotUI:
                 if "payload" in event and event["payload"]:
                     self.current_payload = event["payload"]
                     self.initial_state["payload"] = self.current_payload
+                    # Invalidate cache when payload changes
+                    self._cached_payload_str = None
+                    self._payload_hash = None
                 
                 # Update form complete status
                 if "is_form_complete" in event:
@@ -106,13 +122,25 @@ class IntactBotUI:
         return history, self.format_payload(), self.is_form_complete
     
     def format_payload(self) -> str:
-        """Format the current payload for display"""
+        """Format the current payload for display with caching for performance."""
         try:
+            # Check if payload has changed using hash comparison
+            current_hash = self._compute_payload_hash()
+            if self._payload_hash == current_hash and self._cached_payload_str is not None:
+                return self._cached_payload_str
+            
+            # Payload has changed, recompute formatted string
             if self.current_payload:
                 payload_dict = self.current_payload.model_dump() if hasattr(self.current_payload, 'model_dump') else self.current_payload
-                return json.dumps(payload_dict, indent=2, ensure_ascii=False)
+                formatted_payload = json.dumps(payload_dict, indent=2, ensure_ascii=False)
             else:
-                return "No payload data available"
+                formatted_payload = "No payload data available"
+            
+            # Cache the result
+            self._cached_payload_str = formatted_payload
+            self._payload_hash = current_hash
+            
+            return formatted_payload
         except Exception as e:
             return f"Error formatting payload: {str(e)}"
     
@@ -128,18 +156,23 @@ class IntactBotUI:
         self.current_payload = FNOLPayload(claim=example_json)
         self.is_form_complete = False
         
-        initial_human_message = HumanMessage(content=".")
+        # Clear cache
+        self._cached_payload_str = None
+        self._payload_hash = None
+        
+        initial_human_message = HumanMessage(content=" ")
         self.initial_state: ConvoState = {
             "messages": [initial_human_message],
             "payload": self.current_payload,
             "is_form_complete": self.is_form_complete,
         }
         
-        self.initial_chat_history = self._get_initial_message()
+        self.initial_chat_history = asyncio.run(self._get_initial_message())
         return self.initial_chat_history, self.format_payload(), self.is_form_complete
 
+@lru_cache(maxsize=1)
 def get_logo_data_uri():
-    """Convert logo to base64 data URI"""
+    """Convert logo to base64 data URI with caching"""
     try:
         # Get the current directory of this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -304,7 +337,7 @@ def create_ui():
                 
                 info_panel = gr.HTML(create_info_panel(bot.is_form_complete))
         
-        def send_message(message, history):
+        async def send_message(message, history):
             """Process user message and stream updates to the UI."""
             if not message.strip():
                 yield history, "", bot.format_payload(), "", create_payload_header(bot.is_form_complete), create_info_panel(bot.is_form_complete)
@@ -328,7 +361,7 @@ def create_ui():
                             old_format_history[-1][1] = msg['content']
 
             # Process the message
-            updated_history_old, updated_payload, is_form_complete = bot.process_message(message, old_format_history)
+            updated_history_old, updated_payload, is_form_complete = await bot.process_message(message, old_format_history)
             
             # Convert back to new message format
             new_format_history = []
