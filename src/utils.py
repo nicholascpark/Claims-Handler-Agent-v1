@@ -64,10 +64,10 @@ def create_llm(azure_compatible=False, test_connection=False):
     
     # Return cached instance if available
     if cache_key in _llm_cache:
-        print("🚀 Using cached Azure OpenAI client...")
+        print(">> Using cached Azure OpenAI client...")
         return _llm_cache[cache_key]
     
-    print("🚀 Creating new Azure OpenAI client...")
+    print(">> Creating new Azure OpenAI client...")
     try:
         api_key = os.environ["AZURE_OPENAI_API_KEY"]
     except KeyError:
@@ -96,12 +96,12 @@ def create_llm(azure_compatible=False, test_connection=False):
     
     # Wrap if azure_compatible is True
     if azure_compatible:
-        print("🔧 Wrapping LLM for Azure OpenAI compatibility (tool_choice fixes)")
+        print(">> Wrapping LLM for Azure OpenAI compatibility (tool_choice fixes)")
         llm = AzureOpenAIWrapper(llm)
     
     # Cache the instance
     _llm_cache[cache_key] = llm
-    print("✅ Azure OpenAI client created and cached successfully")
+    print(">> Azure OpenAI client created and cached successfully")
     
     return llm
 

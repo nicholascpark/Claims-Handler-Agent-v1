@@ -35,6 +35,15 @@ class Settings:
     AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
     AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
     AZURE_DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o-quick")
+    AZURE_STT_DEPLOYMENT_NAME = os.getenv("AZURE_STT_DEPLOYMENT_NAME", "whisper")
+    AZURE_TTS_DEPLOYMENT_NAME = os.getenv("AZURE_TTS_DEPLOYMENT_NAME", "tts")
+    AZURE_TTS_API_VERSION: str = "2024-04-01-preview"
+
+    # Voice settings
+    VOICE_SAMPLE_RATE: int = 16000
+    VOICE_CHUNK_SIZE: int = 1024
+    VOICE_MAX_RECORDING_SECONDS: int = 30
+    TTS_VOICE_MODEL: str = "alloy"
     
     # Optional: Model name for tracing and token counting (doesn't affect completion)
     MODEL = os.getenv("MODEL", "gpt-4")

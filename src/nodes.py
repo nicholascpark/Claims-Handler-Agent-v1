@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from src.prompts import primary_assistant_prompt
 from src.tools import get_preliminary_estimate
 from src.utils import check_payload_completeness, create_llm
+from datetime import datetime
 
 # Lazy imports for better performance
 def _get_ssl_context():
@@ -53,10 +54,31 @@ class Agent:
         self.runnable = runnable
 
     async def __call__(self, state: ConvoState, config: RunnableConfig):
-        result = await self.runnable.ainvoke(state)
+        # Ensure the system prompt is properly included in every call
+        messages = state.get("messages", [])
+        
+        # Check if this is the conversation start
+        is_conversation_start = (
+            len(messages) == 1 and 
+            hasattr(messages[0], 'content') and 
+            messages[0].content == "[CONVERSATION_START]"
+        )
+        
+        # Create a proper state with all necessary context
+        enhanced_state = {
+            "messages": messages,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        result = await self.runnable.ainvoke(enhanced_state)
+        
+        # For conversation start, ensure we use the proper SYS_PROMPT greeting
+        if is_conversation_start and hasattr(result, 'content'):
+            # Override with the exact greeting from SYS_PROMPT
+            result.content = "Welcome to the automated First Notice of Loss system. I'm here to help you report your loss. To begin, please tell me what happened."
         
         # Check if there's a proper API response in the recent messages
-        api_call_successful = self._check_for_api_response(state["messages"])
+        api_call_successful = self._check_for_api_response(messages)
         
         return {
             "messages": [result],
