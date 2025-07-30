@@ -1,6 +1,6 @@
 /**
  * Utility for generating a subtle loading sound using Web Audio API
- * Creates three short, pleasant beeps to indicate processing
+ * Creates continuous ambient beeps to indicate processing
  */
 
 export const generateLoadingSound = () => {
@@ -8,36 +8,38 @@ export const generateLoadingSound = () => {
     try {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const sampleRate = audioContext.sampleRate;
-      const totalDuration = 1.5; // Total duration: 1.5 seconds
-      const beepDuration = 0.15; // Each beep: 150ms
-      const pauseDuration = 0.25; // Pause between beeps: 250ms
+      const totalDuration = 4.0; // Extended duration: 4 seconds for smoother continuity
+      const beepDuration = 0.2; // Each beep: 200ms (slightly longer)
+      const pauseDuration = 0.8; // Longer pause between beeps: 800ms (slower frequency)
       const frameCount = sampleRate * totalDuration;
       
       const audioBuffer = audioContext.createBuffer(1, frameCount, sampleRate);
       const channelData = audioBuffer.getChannelData(0);
       
-      // Parameters for the beeps
-      const frequency = 800; // Pleasant, subtle frequency (800 Hz)
-      const volume = 0.08; // Very quiet, subtle volume
+      // Parameters for ambient beeps
+      const frequency = 440; // Lower, warmer frequency (A4 note - more musical/ambient)
+      const volume = 0.06; // Even quieter, more subtle volume
       
       // Clear the entire buffer first
       for (let i = 0; i < frameCount; i++) {
         channelData[i] = 0;
       }
       
-      // Generate three beeps
-      for (let beepIndex = 0; beepIndex < 3; beepIndex++) {
-        const beepStartTime = beepIndex * (beepDuration + pauseDuration);
+      // Generate beeps to fill the duration
+      const beepCycleDuration = beepDuration + pauseDuration;
+      const numBeeps = Math.floor(totalDuration / beepCycleDuration);
+      
+      for (let beepIndex = 0; beepIndex < numBeeps; beepIndex++) {
+        const beepStartTime = beepIndex * beepCycleDuration;
         const beepStartFrame = Math.floor(beepStartTime * sampleRate);
         const beepEndFrame = Math.floor((beepStartTime + beepDuration) * sampleRate);
         
         for (let i = beepStartFrame; i < beepEndFrame && i < frameCount; i++) {
           const timeInBeep = (i - beepStartFrame) / sampleRate;
-          const timeInBeepNormalized = timeInBeep / beepDuration;
           
-          // Create a smooth envelope for each beep (fade in/out)
+          // Create a smooth, ambient envelope for each beep (longer fade)
           let envelope = 1;
-          const fadeTime = 0.02; // 20ms fade in/out
+          const fadeTime = 0.05; // 50ms fade in/out for smoother, more ambient sound
           const fadeFrames = fadeTime * sampleRate;
           
           if (i - beepStartFrame < fadeFrames) {
@@ -48,8 +50,13 @@ export const generateLoadingSound = () => {
             envelope = (beepEndFrame - i) / fadeFrames;
           }
           
-          // Generate sine wave for the beep
-          const sample = volume * envelope * Math.sin(2 * Math.PI * frequency * timeInBeep);
+          // Apply exponential curve for more natural sound
+          envelope = Math.pow(envelope, 0.7);
+          
+          // Generate sine wave with slight harmonic for warmth
+          const mainTone = Math.sin(2 * Math.PI * frequency * timeInBeep);
+          const harmonic = 0.1 * Math.sin(2 * Math.PI * frequency * 2 * timeInBeep); // Subtle octave harmonic
+          const sample = volume * envelope * (mainTone + harmonic);
           channelData[i] = sample;
         }
       }

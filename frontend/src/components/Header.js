@@ -25,30 +25,13 @@ const LogoSection = styled.div`
 `;
 
 const LogoImage = styled.img`
-  max-width: 100px;
+  width: 200px; /* Increased size to 2x */
   height: auto;
   object-fit: contain;
   transition: transform 0.3s ease;
   
   &:hover {
     transform: scale(1.05);
-  }
-`;
-
-const LogoText = styled.div`
-  h1 {
-    font-size: 20px;
-    font-weight: 600;
-    color: #2c3e50;
-    margin: 0;
-    letter-spacing: -0.5px;
-  }
-  
-  p {
-    font-size: 12px;
-    color: #666;
-    margin: 0;
-    font-weight: 500;
   }
 `;
 
@@ -82,10 +65,6 @@ const Header = () => {
         </CenterContent>
         
         <LogoSection>
-          <LogoText>
-            <h1>IntactBot</h1>
-            <p>FNOL v1.0</p>
-          </LogoText>
           <LogoImage 
             src="/intactbot_logo.png" 
             alt="IntactBot Logo"

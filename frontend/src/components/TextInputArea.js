@@ -1,6 +1,6 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useCallback } from 'react';
 import styled, { keyframes } from 'styled-components';
-import { FaPaperPlane, FaMicrophone } from 'react-icons/fa';
+import { FaPaperPlane, FaMicrophone, FaRedo } from 'react-icons/fa';
 
 const RecordingIndicator = styled.div`
   display: flex;
@@ -117,6 +117,33 @@ const ToggleButton = styled.button`
   }
 `;
 
+// Start Over button shares styles with ToggleButton but uses a neutral color scheme
+const StartOverButton = styled.button`
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  justify-content: center;
+
+  &:hover:not(:disabled) {
+    background: #5a6268;
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+`;
+
 const TextInputArea = memo(({
   textMessage,
   isRecording,
@@ -129,29 +156,64 @@ const TextInputArea = memo(({
   onTextChange,
   onSendMessage,
   onKeyPress,
-  onToggleRecording
+  onToggleRecording,
+  onStartOver,
+  onStopRecording
 }) => {
   // Memoize placeholder text calculation
   const placeholderText = useMemo(() => {
-    if (isRecording || isPaused) {
-      return "Recording in progress - press Send to submit recording...";
-    }
     if (conversationTurn === 'ai_speaking' || conversationTurn === 'processing') {
       return "Please wait while AI responds...";
     }
+    if (isRecording && !isPaused && !textMessage.trim()) {
+      return "Recording in progress - start typing to switch to text mode...";
+    }
+    if (isPaused && !textMessage.trim()) {
+      return "Recording paused - start typing to switch to text mode...";
+    }
     if (conversationTurn === 'user_turn' || conversationTurn === 'user_speaking') {
-      return "💡 Your turn - Recording will start automatically or type here...";
+      return "💡 Your turn - Type here or use Record button to start voice recording...";
     }
     return "💡 Type your message here to start the conversation...";
-  }, [isRecording, isPaused, conversationTurn]);
+  }, [isRecording, isPaused, textMessage, conversationTurn]);
 
-  // Memoize send button text
+  // Memoize input disabled state
+  const isInputDisabled = useMemo(() => {
+    return isLoading || isTextSending || 
+           conversationTurn === 'ai_speaking' || conversationTurn === 'processing';
+  }, [isLoading, isTextSending, conversationTurn]);
+
+  // Handle text change and stop recording if user starts typing
+  const handleTextChange = useCallback((e) => {
+    const newValue = e.target.value;
+    onTextChange(e);
+    
+    // If user starts typing while recording, stop the recording completely
+    if ((isRecording || isPaused) && newValue.length > textMessage.length) {
+      // Only trigger when text is being added, not deleted
+      onStopRecording();
+    }
+  }, [onTextChange, isRecording, isPaused, textMessage.length, onStopRecording]);
+
+  // Memoize send button disabled state - updated to work with typing override
+  const isSendDisabled = useMemo(() => {
+    return (!textMessage.trim() && !isRecording && !isPaused) || 
+           isLoading || isTextSending || isProcessing || 
+           (conversationTurn === 'ai_speaking' && !isRecording && !isPaused && !textMessage.trim());
+  }, [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn]);
+
+  // Determine if we should show recording-specific UI or normal text input UI
+  const showRecordingUI = useMemo(() => {
+    return (isRecording || isPaused) && !textMessage.trim();
+  }, [isRecording, isPaused, textMessage]);
+
+  // Memoize send button text - updated for typing override
   const sendButtonText = useMemo(() => {
-    if (isRecording || isPaused) {
+    if (showRecordingUI) {
       return isProcessing ? 'Sending...' : 'Send Recording';
     }
     return isTextSending ? 'Sending...' : 'Send';
-  }, [isRecording, isPaused, isProcessing, isTextSending]);
+  }, [showRecordingUI, isProcessing, isTextSending]);
 
   // Memoize toggle button text
   const toggleButtonText = useMemo(() => {
@@ -160,28 +222,15 @@ const TextInputArea = memo(({
     return 'Record';
   }, [isRecording, isPaused]);
 
-  // Memoize input disabled state
-  const isInputDisabled = useMemo(() => {
-    return isLoading || isTextSending || isRecording || isPaused || 
-           conversationTurn === 'ai_speaking' || conversationTurn === 'processing';
-  }, [isLoading, isTextSending, isRecording, isPaused, conversationTurn]);
-
-  // Memoize send button disabled state
-  const isSendDisabled = useMemo(() => {
-    return (!textMessage.trim() && !isRecording && !isPaused) || 
-           isLoading || isTextSending || isProcessing || 
-           (conversationTurn === 'ai_speaking' && !isRecording && !isPaused);
-  }, [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn]);
-
   return (
     <TextInputContainer>
-      {/* Recording indicator */}
-      {(isRecording || isPaused) && (
+      {/* Recording indicator - only show when recording and no typed text */}
+      {showRecordingUI && (
         <RecordingIndicator $isRecording={isRecording && !isPaused}>
           <FaMicrophone />
           {isRecording && !isPaused 
-            ? 'Recording... Press Send to submit' 
-            : 'Recording paused - Press Send to submit'
+            ? 'Recording... Press Send to submit or start typing to switch modes' 
+            : 'Recording paused - Press Send to submit or Resume to continue'
           }
         </RecordingIndicator>
       )}
@@ -189,7 +238,7 @@ const TextInputArea = memo(({
       <TextInputRow>
         <TextInput
           value={textMessage}
-          onChange={onTextChange}
+          onChange={handleTextChange}
           onKeyPress={onKeyPress}
           placeholder={placeholderText}
           disabled={isInputDisabled}
@@ -198,22 +247,35 @@ const TextInputArea = memo(({
         <SendButton
           onClick={onSendMessage}
           disabled={isSendDisabled}
-          $isRecording={isRecording || isPaused}
+          $isRecording={showRecordingUI}
         >
           <FaPaperPlane />
           {sendButtonText}
         </SendButton>
         
-        {/* Only show manual recording control if not auto-recording */}
+        {/* Manual recording controls - always show when not auto-recording */}
         {!isAutoRecordingPending && (
-          <ToggleButton
-            onClick={onToggleRecording}
-            disabled={isLoading || isProcessing}
-            $isRecording={isRecording && !isPaused}
-          >
-            <FaMicrophone />
-            {toggleButtonText}
-          </ToggleButton>
+          <>
+            <ToggleButton
+              onClick={onToggleRecording}
+              disabled={isLoading || isProcessing}
+              $isRecording={isRecording && !isPaused}
+            >
+              <FaMicrophone />
+              {toggleButtonText}
+            </ToggleButton>
+
+            {/* Start Over appears only while recording or paused and no text typed */}
+            {showRecordingUI && (
+              <StartOverButton
+                onClick={onStartOver}
+                disabled={isLoading || isProcessing}
+              >
+                <FaRedo />
+                Start Over
+              </StartOverButton>
+            )}
+          </>
         )}
       </TextInputRow>
     </TextInputContainer>

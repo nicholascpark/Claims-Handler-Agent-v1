@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo, useReducer } from 'react';
 
 // Constants for configuration
 const AUDIO_CONSTRAINTS = {
@@ -16,7 +16,50 @@ const VISUALIZATION_BARS = 8;
 const DATA_COLLECTION_INTERVAL = 100; // ms
 const MAX_RECORDING_WAIT = 3000; // ms
 
+const STATES = {
+  IDLE: 'idle',
+  INITIALIZING: 'initializing',
+  READY: 'ready',
+  RECORDING: 'recording',
+  PAUSED: 'paused',
+  ERROR: 'error'
+};
+
+const stateReducer = (state, action) => {
+  const { type, error } = action;
+  switch (state.status) {
+    case STATES.IDLE:
+      if (type === 'INIT_START') return { status: STATES.INITIALIZING };
+      break;
+    case STATES.INITIALIZING:
+      if (type === 'INIT_SUCCESS') return { status: STATES.READY };
+      if (type === 'INIT_FAILURE') return { status: STATES.ERROR, error };
+      break;
+    case STATES.READY:
+      if (type === 'START') return { status: STATES.RECORDING };
+      if (type === 'CLEANUP') return { status: STATES.IDLE };
+      break;
+    case STATES.RECORDING:
+      if (type === 'PAUSE') return { status: STATES.PAUSED };
+      if (type === 'STOP') return { status: STATES.READY };
+      if (type === 'ERROR') return { status: STATES.ERROR, error };
+      break;
+    case STATES.PAUSED:
+      if (type === 'RESUME') return { status: STATES.RECORDING };
+      if (type === 'STOP') return { status: STATES.READY };
+      break;
+    case STATES.ERROR:
+      if (type === 'RESET') return { status: STATES.IDLE };
+      break;
+    default:
+      return state;
+  }
+  return state; // Fallback if no transition matched
+};
+
 const useAudioRecording = () => {
+  // State machine reducer
+  const [machine, dispatch] = useReducer(stateReducer, { status: STATES.IDLE });
   // Core states
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -50,6 +93,14 @@ const useAudioRecording = () => {
   useEffect(() => {
     recordingStateRef.current = { isRecording, isPaused };
   }, [isRecording, isPaused]);
+
+  // Sync derived boolean flags with state machine
+  useEffect(() => {
+    const status = machine.status;
+    setIsRecording(status === STATES.RECORDING);
+    setIsPaused(status === STATES.PAUSED);
+    setIsInitialized([STATES.READY, STATES.RECORDING, STATES.PAUSED].includes(status));
+  }, [machine.status]);
 
   // Memoized MIME type detection
   const mimeType = useMemo(() => {
@@ -97,6 +148,7 @@ const useAudioRecording = () => {
 
   // Initialize audio recording
   const initializeRecording = useCallback(async () => {
+    dispatch({ type: 'INIT_START' });
     try {
       console.log('initializeRecording called');
       setError(null);
@@ -166,11 +218,12 @@ const useAudioRecording = () => {
         setError(`Recording error: ${event.error.message}`);
       };
 
-      console.log('Setting isInitialized to true');
-      setIsInitialized(true);
+      console.log('Initialization successful');
+      dispatch({ type: 'INIT_SUCCESS' });
     } catch (err) {
       console.error('initializeRecording failed:', err);
       setError(`Failed to initialize recording: ${err.message}`);
+      dispatch({ type: 'INIT_FAILURE', error: err.message });
     }
   }, [selectedDeviceId, getAudioDevices, createStream, mimeType]);
 
@@ -223,8 +276,7 @@ const useAudioRecording = () => {
         mediaRecorderRef.current.start(DATA_COLLECTION_INTERVAL);
         
         console.log('Setting recording states...');
-        setIsRecording(true);
-        setIsPaused(false);
+        dispatch({ type: 'START' });
         setRecordingTime(0);
 
         // Start timer
@@ -253,7 +305,7 @@ const useAudioRecording = () => {
   const pauseRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording && !isPaused) {
       mediaRecorderRef.current.pause();
-      setIsPaused(true);
+      dispatch({ type: 'PAUSE' });
       
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -265,9 +317,10 @@ const useAudioRecording = () => {
 
   // Resume recording
   const resumeRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording && isPaused) {
+    // Resume is valid when we are currently paused (isPaused true) regardless of isRecording flag
+    if (mediaRecorderRef.current && isPaused) {
       mediaRecorderRef.current.resume();
-      setIsPaused(false);
+      dispatch({ type: 'RESUME' });
       
       timerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
@@ -275,7 +328,7 @@ const useAudioRecording = () => {
       
       startAudioVisualization();
     }
-  }, [isRecording, isPaused]);
+  }, [isPaused]);
 
   // Stop recording with Promise-based approach
   const stopRecording = useCallback(() => {
@@ -356,8 +409,7 @@ const useAudioRecording = () => {
       }
       
       // Update state immediately
-      setIsRecording(false);
-      setIsPaused(false);
+      dispatch({ type: 'STOP' });
       
       // Clear timer
       if (timerRef.current) {
@@ -371,17 +423,23 @@ const useAudioRecording = () => {
   // Toggle recording
   const toggleRecording = useCallback(() => {
     console.log('toggleRecording called with states:', { isRecording, isPaused });
-    
+
+    // Prioritize resuming if currently paused to avoid MediaRecorder state errors
+    if (isPaused) {
+      console.log('Resuming recording...');
+      resumeRecording();
+      return;
+    }
+
+    // If not recording (includes idle state), start a new recording
     if (!isRecording) {
       console.log('Starting recording...');
       return startRecording();
-    } else if (isPaused) {
-      console.log('Resuming recording...');
-      resumeRecording();
-    } else {
-      console.log('Pausing recording...');
-      pauseRecording();
     }
+
+    // Otherwise we are actively recording – pause it
+    console.log('Pausing recording...');
+    pauseRecording();
   }, [isRecording, isPaused, startRecording, pauseRecording, resumeRecording]);
 
   // Audio visualization
@@ -566,6 +624,11 @@ const useAudioRecording = () => {
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close();
     }
+    if (analyzerRef.current) {
+      try {
+        analyzerRef.current.disconnect();
+      } catch (_) {}
+    }
     audioContextRef.current = null;
     
     setIsInitialized(false);
@@ -591,16 +654,19 @@ const useAudioRecording = () => {
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close();
     }
+    if (analyzerRef.current) {
+      try {
+        analyzerRef.current.disconnect();
+      } catch (_) {}
+    }
     audioContextRef.current = null;
     
     if (audioURL) {
       URL.revokeObjectURL(audioURL);
     }
-    
-    setIsRecording(false);
-    setIsPaused(false);
+
+    dispatch({ type: 'CLEANUP' });
     setRecordingTime(0);
-    setIsInitialized(false);
     setAudioURL(null);
     setAudioBlob(null);
   }, [audioURL]);

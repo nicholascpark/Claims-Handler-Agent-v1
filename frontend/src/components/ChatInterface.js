@@ -5,19 +5,24 @@ import { toast } from 'react-toastify';
 
 // Import optimized components
 import PayloadDisplay from './PayloadDisplay';
-import AudioPlayer from './AudioPlayer';
+import AudioControlsSection from './AudioControlsSection';
 import MessagesList from './MessagesList';
-import ConversationIndicator from './ConversationTurnIndicator';
-import VoiceControls from './VoiceControls';
 import TextInputArea from './TextInputArea';
 import useAudioRecording from '../hooks/useAudioRecording';
-import { getLoadingSound, clearLoadingSoundCache } from '../utils/loadingSound';
+import { getLoadingSound } from '../utils/loadingSound';
+
+const MainContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 70vh;
+`;
 
 const ChatContainer = styled.div`
   display: grid;
   grid-template-columns: 1fr 560px;
   gap: 24px;
-  min-height: 70vh;
+  min-height: 60vh;
   
   @media (max-width: 1200px) {
     grid-template-columns: 1fr;
@@ -81,29 +86,6 @@ const ChatBody = styled.div`
   display: flex;
   flex-direction: column;
   height: 500px;
-`;
-
-const AutoRecordingNotification = styled.div`
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-  border: 2px solid #2196f3;
-  border-radius: 12px;
-  padding: 12px 16px;
-  margin: 12px 16px;
-  text-align: center;
-  font-weight: 500;
-  color: #1565c0;
-  animation: slideIn 0.5s ease-out;
-  
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
 `;
 
 // Custom hook for conversation state management
@@ -485,6 +467,11 @@ const ChatInterface = memo(({
 
   const handleToggleRecording = useCallback(async () => {
     try {
+      // If we have text content and are starting recording, clear the text
+      if (!isRecording && !isPaused && textMessage.trim()) {
+        setTextMessage('');
+      }
+      
       if (!isRecording && !isPaused && currentAudioData) {
         setCurrentAudioData(null);
         setAiAudioComplete(true);
@@ -493,11 +480,48 @@ const ChatInterface = memo(({
     } catch (error) {
       toast.error(`Recording error: ${error.message}`);
     }
-  }, [isRecording, isPaused, currentAudioData, toggleRecording, setCurrentAudioData, setAiAudioComplete]);
+  }, [isRecording, isPaused, textMessage, currentAudioData, toggleRecording, setCurrentAudioData, setAiAudioComplete]);
+
+  // Restart recording from scratch
+  const handleStartOver = useCallback(async () => {
+    try {
+      // Stop any ongoing recording (if any)
+      if (isRecording || isPaused) {
+        await stopRecording();
+      }
+      // Start a fresh recording
+      await toggleRecording();
+    } catch (error) {
+      toast.error(`Failed to restart recording: ${error.message}`);
+    }
+  }, [isRecording, isPaused, stopRecording, toggleRecording]);
+
+  // Stop recording without restarting (for typing override)
+  const handleStopRecording = useCallback(async () => {
+    try {
+      if (isRecording || isPaused) {
+        await stopRecording();
+        setConversationTurn('user_turn');
+        setIsAutoRecordingPending(false);
+      }
+    } catch (error) {
+      console.error('Failed to stop recording:', error);
+    }
+  }, [isRecording, isPaused, stopRecording, setConversationTurn, setIsAutoRecordingPending]);
 
   const handleTextChange = useCallback((e) => {
-    setTextMessage(e.target.value);
-  }, []);
+    const newValue = e.target.value;
+    const oldLength = textMessage.length;
+    
+    setTextMessage(newValue);
+    
+    // If user starts typing while recording or paused, update conversation state
+    if ((isRecording || isPaused) && newValue.length > oldLength && newValue.trim()) {
+      // User is typing over recording - transition to normal text input mode
+      setConversationTurn('user_turn');
+      setIsAutoRecordingPending(false);
+    }
+  }, [textMessage.length, isRecording, isPaused, setConversationTurn, setIsAutoRecordingPending]);
 
   const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -552,7 +576,7 @@ const ChatInterface = memo(({
           }
           return currentTurn; // Return unchanged
         });
-      }, 500); // 500ms delay between loading sound repetitions
+      }, 100); // 100ms delay between loading sound repetitions for seamless continuity
     }
   }, [setAiAudioComplete, setCurrentAudioData, setConversationTurn, isPlayingLoadingSound, startLoadingSound, conversationTurn]);
 
@@ -676,61 +700,50 @@ const ChatInterface = memo(({
     onTextChange: handleTextChange,
     onSendMessage: () => handleSendMessage(),
     onKeyPress: handleKeyPress,
-    onToggleRecording: handleToggleRecording
-  }), [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn, isAutoRecordingPending, handleTextChange, handleSendMessage, handleKeyPress, handleToggleRecording]);
+    onToggleRecording: handleToggleRecording,
+    onStartOver: handleStartOver,
+    onStopRecording: handleStopRecording
+  }), [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn, isAutoRecordingPending, handleTextChange, handleSendMessage, handleKeyPress, handleToggleRecording, handleStartOver, handleStopRecording]);
 
   return (
-    <ChatContainer>
-      <LeftPanel>
-        <ChatHeader>
-          <ChatTitle>🗣️ Voice & Text Conversation</ChatTitle>
-          <ResetButton onClick={handleReset} disabled={isLoading}>
-            <FaTrash />
-            Clear Chat
-          </ResetButton>
-        </ChatHeader>
-
-        {/* Conversation turn indicator */}
-        <ConversationIndicator 
-          conversationTurn={conversationTurn}
-          turnTransitionDelay={turnTransitionDelay}
-        />
-
-        {/* Auto-recording notification */}
-        {isAutoRecordingPending && conversationTurn === 'waiting' && (
-          <AutoRecordingNotification>
-            🤖 Recording will start automatically in a moment...
-          </AutoRecordingNotification>
-        )}
-
-        {/* Voice controls */}
-        <VoiceControls {...voiceControlsProps} />
-
-        {/* Hidden AI Audio Player */}
-        {currentAudioData && (
-          <AudioPlayer
-            audioData={currentAudioData}
-            onPlay={handleAudioPlay}
-            onEnd={handleAudioEnd}
-            autoPlay={true}
-            loop={false}
-          />
-        )}
-
-        <ChatBody>
-          <MessagesList 
-            chatHistory={chatHistory} 
-            conversationTurn={conversationTurn} 
-          />
-          <TextInputArea {...textInputProps} />
-        </ChatBody>
-      </LeftPanel>
-
-      <PayloadDisplay
-        payload={payload}
-        isFormComplete={isFormComplete}
+    <MainContainer>
+      {/* Audio Controls Section - Above the dual-pane layout */}
+      <AudioControlsSection 
+        conversationTurn={conversationTurn}
+        turnTransitionDelay={turnTransitionDelay}
+        isAutoRecordingPending={isAutoRecordingPending}
+        currentAudioData={currentAudioData}
+        onAudioPlay={handleAudioPlay}
+        onAudioEnd={handleAudioEnd}
+        voiceControlsProps={voiceControlsProps}
       />
-    </ChatContainer>
+
+      {/* Dual-pane layout */}
+      <ChatContainer>
+        <LeftPanel>
+          <ChatHeader>
+            <ChatTitle>💬 Conversation History</ChatTitle>
+            <ResetButton onClick={handleReset} disabled={isLoading}>
+              <FaTrash />
+              Clear Chat
+            </ResetButton>
+          </ChatHeader>
+
+          <ChatBody>
+            <MessagesList 
+              chatHistory={chatHistory} 
+              conversationTurn={conversationTurn} 
+            />
+            <TextInputArea {...textInputProps} />
+          </ChatBody>
+        </LeftPanel>
+
+        <PayloadDisplay
+          payload={payload}
+          isFormComplete={isFormComplete}
+        />
+      </ChatContainer>
+    </MainContainer>
   );
 });
 
