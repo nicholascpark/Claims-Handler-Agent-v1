@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { FaMicrophone, FaComments, FaRobot, FaCode } from 'react-icons/fa';
 import LoadingSpinner from './LoadingSpinner';
+// Import the existing visualizer that is used elsewhere in the app so we get a consistent look-and-feel
+import SoundWaveVisualizer from './SoundWaveVisualizer';
 
 const StartContainer = styled.div`
   display: flex;
@@ -85,7 +87,7 @@ const FeatureItem = styled.div`
 const FeatureIcon = styled.div`
   width: 48px;
   height: 48px;
-  background: ${props => props.color || '#007bff'};
+  background: ${props => props.$color || '#007bff'};
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -187,18 +189,18 @@ const StatusMessage = styled.div`
   border-radius: 8px;
   font-weight: 500;
   background: ${props => {
-    if (props.type === 'error') return '#ffebee';
-    if (props.type === 'warning') return '#fff8e1';
+    if (props.$type === 'error') return '#ffebee';
+    if (props.$type === 'warning') return '#fff8e1';
     return '#e3f2fd';
   }};
   color: ${props => {
-    if (props.type === 'error') return '#c62828';
-    if (props.type === 'warning') return '#ef6c00';
+    if (props.$type === 'error') return '#c62828';
+    if (props.$type === 'warning') return '#ef6c00';
     return '#1565c0';
   }};
   border: 1px solid ${props => {
-    if (props.type === 'error') return '#f44336';
-    if (props.type === 'warning') return '#ff9800';
+    if (props.$type === 'error') return '#f44336';
+    if (props.$type === 'warning') return '#ff9800';
     return '#2196f3';
   }};
 `;
@@ -234,6 +236,10 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
     return '';
   });
 
+  // ==== Microphone test state (audio levels) ====
+  const [audioLevels, setAudioLevels] = useState(new Array(8).fill(0));
+
+  // Enumerate available input devices so the user can pick one
   useEffect(() => {
     const fetchDevices = async () => {
       try {
@@ -241,6 +247,7 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
         setAvailableDevices(audioInputs);
 
+        // If nothing selected yet, default to the first available
         if (!selectedDeviceId && audioInputs.length > 0) {
           setSelectedDeviceId(audioInputs[0].deviceId);
         }
@@ -250,6 +257,73 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
     };
 
     fetchDevices();
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
+    // Helper refs so we can clean up properly
+    let audioContext = null;
+    let analyzer = null;
+    let microphoneStream = null;
+    let animationFrame = null;
+
+    const initMicTest = async () => {
+      try {
+        // Request access with the currently selected device (if any)
+        const constraints = {
+          audio: {
+            deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+          },
+        };
+
+        microphoneStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyzer = audioContext.createAnalyser();
+        analyzer.fftSize = 256;
+
+        const source = audioContext.createMediaStreamSource(microphoneStream);
+        source.connect(analyzer);
+
+        const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+
+        const updateLevels = () => {
+          analyzer.getByteFrequencyData(dataArray);
+
+          const barWidth = Math.floor(dataArray.length / 8);
+          const newLevels = [];
+
+          for (let i = 0; i < 8; i++) {
+            let sum = 0;
+            for (let j = 0; j < barWidth; j++) {
+              sum += dataArray[i * barWidth + j];
+            }
+            const average = sum / barWidth;
+            // Boost sensitivity so small input changes are visible
+            newLevels.push(Math.min(100, (average / 255) * 300));
+          }
+
+          setAudioLevels(newLevels);
+          animationFrame = requestAnimationFrame(updateLevels);
+        };
+
+        updateLevels();
+      } catch (err) {
+        console.error('Microphone test initialization error:', err);
+      }
+    };
+
+    // Initialize test when component mounts or when selected device changes
+    initMicTest();
+
+    // Cleanup on unmount or when device changes
+    return () => {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      if (analyzer) analyzer.disconnect();
+      if (audioContext && audioContext.state !== 'closed') audioContext.close();
+      if (microphoneStream) {
+        microphoneStream.getTracks().forEach(track => track.stop());
+      }
+    };
   }, [selectedDeviceId]);
 
   const handleDeviceChange = (e) => {
@@ -277,7 +351,7 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
 
         <FeaturesList>
           <FeatureItem>
-            <FeatureIcon color="#28a745">
+            <FeatureIcon $color="#28a745">
               <FaMicrophone />
             </FeatureIcon>
             <FeatureTitle>Smart Voice Recording</FeatureTitle>
@@ -287,7 +361,7 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
           </FeatureItem>
 
           <FeatureItem>
-            <FeatureIcon color="#007bff">
+            <FeatureIcon $color="#007bff">
               <FaComments />
             </FeatureIcon>
             <FeatureTitle>Real-time Processing</FeatureTitle>
@@ -297,7 +371,7 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
           </FeatureItem>
 
           <FeatureItem>
-            <FeatureIcon color="#dc3545">
+            <FeatureIcon $color="#dc3545">
               <FaRobot />
             </FeatureIcon>
             <FeatureTitle>AI-Powered Agent</FeatureTitle>
@@ -308,7 +382,7 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
 
           {/* New fourth informational box */}
           <FeatureItem>
-            <FeatureIcon color="#6f42c1">
+            <FeatureIcon $color="#6f42c1">
               <FaCode />
             </FeatureIcon>
             <FeatureTitle>JSON Repair</FeatureTitle>
@@ -339,6 +413,14 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
                   </option>
                 ))}
               </DeviceSelect>
+
+              {/* Live microphone level visualizer */}
+              <SoundWaveVisualizer
+                audioLevels={audioLevels}
+                isRecording={true}
+                isPaused={false}
+                show={true}
+              />
             </MicConfigContainer>
 
             <StartButton
@@ -348,7 +430,7 @@ const StartScreen = ({ onStart, isLoading, isBackendHealthy }) => {
               Start FNOL
             </StartButton>
             
-            <StatusMessage type={statusMessage.type}>
+            <StatusMessage $type={statusMessage.type}>
               {statusMessage.message}
             </StatusMessage>
           </>

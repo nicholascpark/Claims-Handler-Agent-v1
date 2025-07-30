@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo, useMemo, useCallback } from 'react';
 import styled from 'styled-components';
 import { FaCheckCircle, FaClock, FaExpand, FaCompress, FaCopy } from 'react-icons/fa';
 import { toast } from 'react-toastify';
@@ -37,8 +37,8 @@ const PayloadTitle = styled.h3`
 `;
 
 const StatusBadge = styled.span`
-  background: ${props => props.isComplete ? '#28a745' : '#ffc107'};
-  color: ${props => props.isComplete ? 'white' : '#000'};
+  background: ${props => props.$isComplete ? '#28a745' : '#ffc107'};
+  color: ${props => props.$isComplete ? 'white' : '#000'};
   font-size: 12px;
   font-weight: 600;
   padding: 4px 8px;
@@ -67,7 +67,7 @@ const ExpandButton = styled.button`
 `;
 
 const PayloadContent = styled.div`
-  height: ${props => props.expanded ? 'auto' : '560px'};
+  height: ${props => props.$expanded ? 'auto' : '560px'};
   overflow-y: auto;
   transition: height 0.3s ease;
 `;
@@ -181,36 +181,24 @@ const LoadingState = styled.div`
   }
 `;
 
-const PayloadDisplay = ({ payload = {}, isFormComplete = false }) => {
+// Optimized JSON highlighting with memoization
+const highlightJson = (jsonString) => {
+  if (!jsonString) return '';
+  
+  return jsonString
+    .replace(/"([^"]+)"(\s*:)/g, '<span class="json-key">"$1"</span>$2')
+    .replace(/:\s*"([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+    .replace(/:\s*(\d+(?:\.\d+)?)/g, ': <span class="json-number">$1</span>')
+    .replace(/:\s*(true|false)/g, ': <span class="json-boolean">$1</span>')
+    .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>')
+    .replace(/([{}[\],])/g, '<span class="json-punctuation">$1</span>');
+};
+
+const PayloadDisplay = memo(({ payload = {}, isFormComplete = false }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const toggleExpanded = () => {
-    setIsExpanded(!isExpanded);
-  };
-
-  const handleCopyJson = () => {
-    try {
-      const jsonString = JSON.stringify(payload, null, 2);
-      navigator.clipboard.writeText(jsonString);
-      toast.success('JSON copied to clipboard!');
-    } catch (error) {
-      toast.error('Failed to copy JSON');
-    }
-  };
-
-  const highlightJson = (jsonString) => {
-    if (!jsonString) return '';
-    
-    return jsonString
-      .replace(/"([^"]+)"(\s*:)/g, '<span class="json-key">"$1"</span>$2')
-      .replace(/:\s*"([^"]*)"/g, ': <span class="json-string">"$1"</span>')
-      .replace(/:\s*(\d+(?:\.\d+)?)/g, ': <span class="json-number">$1</span>')
-      .replace(/:\s*(true|false)/g, ': <span class="json-boolean">$1</span>')
-      .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>')
-      .replace(/([{}[\],])/g, '<span class="json-punctuation">$1</span>');
-  };
-
-  const formatPayload = () => {
+  // Memoize payload formatting to avoid re-parsing on every render
+  const formattedPayload = useMemo(() => {
     try {
       if (!payload || Object.keys(payload).length === 0) {
         return null;
@@ -219,28 +207,86 @@ const PayloadDisplay = ({ payload = {}, isFormComplete = false }) => {
     } catch (error) {
       return `Error formatting payload: ${error.message}`;
     }
-  };
+  }, [payload]);
 
-  const formattedPayload = formatPayload();
+  // Memoize highlighted JSON to avoid re-highlighting on every render
+  const highlightedJson = useMemo(() => {
+    if (!formattedPayload || formattedPayload.startsWith('Error')) {
+      return formattedPayload;
+    }
+    return highlightJson(formattedPayload);
+  }, [formattedPayload]);
+
+  // Optimize expand/collapse toggle
+  const toggleExpanded = useCallback(() => {
+    setIsExpanded(prev => !prev);
+  }, []);
+
+  // Optimize copy functionality
+  const handleCopyJson = useCallback(() => {
+    if (!formattedPayload) {
+      toast.error('No data to copy');
+      return;
+    }
+    
+    try {
+      navigator.clipboard.writeText(formattedPayload);
+      toast.success('JSON copied to clipboard!');
+    } catch (error) {
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = formattedPayload;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        toast.success('JSON copied to clipboard!');
+      } catch (fallbackError) {
+        toast.error('Failed to copy JSON');
+      }
+    }
+  }, [formattedPayload]);
+
+  // Memoize status badge content
+  const statusBadgeContent = useMemo(() => {
+    return isFormComplete ? (
+      <>
+        <FaCheckCircle />
+        Complete
+      </>
+    ) : (
+      <>
+        <FaClock />
+        In Progress
+      </>
+    );
+  }, [isFormComplete]);
+
+  // Memoize info panel content
+  const infoPanelContent = useMemo(() => (
+    <>
+      <strong>Real-time Payload:</strong> This panel displays the current state of claim data 
+      being processed by the agent. Updates automatically as the conversation progresses.
+      TrustCall patches are applied incrementally to maintain data consistency.
+      {isFormComplete && (
+        <>
+          <br />
+          <strong style={{ color: '#28a745' }}>✅ Form Complete:</strong> All required claim 
+          information has been collected successfully.
+        </>
+      )}
+    </>
+  ), [isFormComplete]);
 
   return (
     <PayloadContainer>
       <PayloadHeader>
         <PayloadTitle>
           📋 Claim Payload
-          <StatusBadge isComplete={isFormComplete}>
-            {isFormComplete ? (
-              <>
-                <FaCheckCircle />
-                Complete
-              </>
-            ) : (
-              <>
-                <FaClock />
-                In Progress
-              </>
-            )}
-          </StatusBadge>
+                  <StatusBadge $isComplete={isFormComplete}>
+          {statusBadgeContent}
+        </StatusBadge>
         </PayloadTitle>
         
         <ExpandButton onClick={toggleExpanded}>
@@ -248,7 +294,7 @@ const PayloadDisplay = ({ payload = {}, isFormComplete = false }) => {
         </ExpandButton>
       </PayloadHeader>
 
-      <PayloadContent expanded={isExpanded}>
+      <PayloadContent $expanded={isExpanded}>
         {!formattedPayload ? (
           <EmptyState>
             No payload data available yet.<br />
@@ -269,7 +315,7 @@ const PayloadDisplay = ({ payload = {}, isFormComplete = false }) => {
             </CodeHeader>
             <CodeBlock 
               dangerouslySetInnerHTML={{ 
-                __html: highlightJson(formattedPayload) 
+                __html: highlightedJson 
               }}
             />
           </CodeContainer>
@@ -277,19 +323,12 @@ const PayloadDisplay = ({ payload = {}, isFormComplete = false }) => {
       </PayloadContent>
 
       <InfoPanel>
-        <strong>Real-time Payload:</strong> This panel displays the current state of claim data 
-        being processed by the agent. Updates automatically as the conversation progresses.
-        TrustCall patches are applied incrementally to maintain data consistency.
-        {isFormComplete && (
-          <>
-            <br />
-            <strong style={{ color: '#28a745' }}>✅ Form Complete:</strong> All required claim 
-            information has been collected successfully.
-          </>
-        )}
+        {infoPanelContent}
       </InfoPanel>
     </PayloadContainer>
   );
-};
+});
+
+PayloadDisplay.displayName = 'PayloadDisplay';
 
 export default PayloadDisplay; 

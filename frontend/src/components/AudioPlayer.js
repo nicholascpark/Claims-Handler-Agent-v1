@@ -5,7 +5,8 @@ const AudioPlayer = ({
   onPlay, 
   onEnd, 
   autoPlay = true,
-  isInitial = false 
+  isInitial = false,
+  loop = false
 }) => {
   const audioRef = useRef(null);
 
@@ -22,6 +23,7 @@ const AudioPlayer = ({
           const audioUrl = URL.createObjectURL(audioBlob);
           
           audioRef.current.src = audioUrl;
+          audioRef.current.loop = loop; // Set loop property
           audioRef.current.load();
 
           // Always attempt autoplay
@@ -58,8 +60,16 @@ const AudioPlayer = ({
               });
           }
 
-          // Cleanup function - revoke the object URL
+          // Cleanup – stop playback and revoke URL to avoid memory leaks and unintended replays
           return () => {
+            if (audioRef.current) {
+              try {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+              } catch (e) {
+                // No-op – element may already be gone
+              }
+            }
             if (audioUrl) {
               URL.revokeObjectURL(audioUrl);
             }
@@ -69,7 +79,7 @@ const AudioPlayer = ({
         console.error('Error creating audio blob:', error);
       }
     }
-  }, [audioData]);
+  }, [audioData, loop]);
 
   const handleAudioEnded = () => {
     if (onEnd) onEnd();

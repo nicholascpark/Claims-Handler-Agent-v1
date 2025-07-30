@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import styled from 'styled-components';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -49,6 +49,20 @@ const ErrorBanner = styled.div`
   }
 `;
 
+// Memoized Toast configuration
+const toastConfig = {
+  position: "top-right",
+  autoClose: 5000,
+  hideProgressBar: false,
+  newestOnTop: false,
+  closeOnClick: true,
+  rtl: false,
+  pauseOnFocusLoss: true,
+  draggable: true,
+  pauseOnHover: true,
+  theme: "light"
+};
+
 function App() {
   const [isStarted, setIsStarted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -60,31 +74,31 @@ function App() {
   const [isBackendHealthy, setIsBackendHealthy] = useState(null);
   const [initialAudio, setInitialAudio] = useState(null);
 
-  // Removed auto-start behavior to require user to press the Start button manually
+  // Memoized backend health check function
+  const checkBackendHealth = useCallback(async () => {
+    try {
+      await chatApi.healthCheck();
+      setIsBackendHealthy(true);
+      setBackendError(null);
+    } catch (error) {
+      setIsBackendHealthy(false);
+      setBackendError('Backend service is not available. Please ensure the backend server is running.');
+      console.error('Backend health check failed:', error);
+    }
+  }, []);
 
   // Check backend health on startup
   useEffect(() => {
-    const checkBackendHealth = async () => {
-      try {
-        await chatApi.healthCheck();
-        setIsBackendHealthy(true);
-        setBackendError(null);
-      } catch (error) {
-        setIsBackendHealthy(false);
-        setBackendError('Backend service is not available. Please ensure the backend server is running.');
-        console.error('Backend health check failed:', error);
-      }
-    };
-
     checkBackendHealth();
     
     // Check health every 30 seconds
     const healthCheckInterval = setInterval(checkBackendHealth, 30000);
     
     return () => clearInterval(healthCheckInterval);
-  }, []);
+  }, [checkBackendHealth]);
 
-  const handleStartConversation = async () => {
+  // Memoized handlers to prevent unnecessary re-renders
+  const handleStartConversation = useCallback(async () => {
     if (!isBackendHealthy) {
       toast.error('Backend service is not available. Please try again later.');
       return;
@@ -108,9 +122,9 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isBackendHealthy]);
 
-  const handleSendMessage = async (message) => {
+  const handleSendMessage = useCallback(async (message) => {
     if (!threadId) {
       toast.error('No active conversation. Please restart the application.');
       return;
@@ -129,9 +143,9 @@ function App() {
       toast.error(`Failed to send message: ${error.message}`);
       throw error;
     }
-  };
+  }, [threadId]);
 
-  const handleSendVoiceMessage = async (audioData) => {
+  const handleSendVoiceMessage = useCallback(async (audioData) => {
     if (!threadId) {
       toast.error('No active conversation. Please restart the application.');
       return;
@@ -150,9 +164,9 @@ function App() {
       toast.error(`Failed to send voice message: ${error.message}`);
       throw error;
     }
-  };
+  }, [threadId]);
 
-  const handleResetConversation = async () => {
+  const handleResetConversation = useCallback(async () => {
     if (!threadId) return;
 
     setIsLoading(true);
@@ -165,6 +179,7 @@ function App() {
       setChatHistory([]);
       setPayload({});
       setIsFormComplete(false);
+      setInitialAudio(null);
       
       toast.success('Conversation reset successfully!');
     } catch (error) {
@@ -173,9 +188,9 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [threadId]);
 
-  const retryBackendConnection = async () => {
+  const retryBackendConnection = useCallback(async () => {
     try {
       await chatApi.healthCheck();
       setIsBackendHealthy(true);
@@ -185,7 +200,34 @@ function App() {
       setBackendError('Backend service is still not available. Please ensure the backend server is running.');
       toast.error('Failed to connect to backend service.');
     }
-  };
+  }, []);
+
+  // Memoized props for components to prevent unnecessary re-renders
+  const startScreenProps = useMemo(() => ({
+    onStart: handleStartConversation,
+    isLoading,
+    isBackendHealthy
+  }), [handleStartConversation, isLoading, isBackendHealthy]);
+
+  const chatInterfaceProps = useMemo(() => ({
+    chatHistory,
+    payload,
+    isFormComplete,
+    onSendMessage: handleSendMessage,
+    onSendVoiceMessage: handleSendVoiceMessage,
+    onReset: handleResetConversation,
+    isLoading,
+    initialAudio
+  }), [
+    chatHistory,
+    payload,
+    isFormComplete,
+    handleSendMessage,
+    handleSendVoiceMessage,
+    handleResetConversation,
+    isLoading,
+    initialAudio
+  ]);
 
   return (
     <AppContainer>
@@ -204,39 +246,15 @@ function App() {
         {isLoading && <LoadingSpinner />}
         
         {!isStarted ? (
-          <StartScreen 
-            onStart={handleStartConversation}
-            isLoading={isLoading}
-            isBackendHealthy={isBackendHealthy}
-          />
+          <StartScreen {...startScreenProps} />
         ) : (
-          <ChatInterface
-            chatHistory={chatHistory}
-            payload={payload}
-            isFormComplete={isFormComplete}
-            onSendMessage={handleSendMessage}
-            onSendVoiceMessage={handleSendVoiceMessage}
-            onReset={handleResetConversation}
-            isLoading={isLoading}
-            initialAudio={initialAudio}
-          />
+          <ChatInterface {...chatInterfaceProps} />
         )}
       </MainContent>
       
-      <ToastContainer
-        position="top-right"
-        autoClose={5000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-      />
+      <ToastContainer {...toastConfig} />
     </AppContainer>
   );
 }
 
-export default App; 
+export default memo(App); 
