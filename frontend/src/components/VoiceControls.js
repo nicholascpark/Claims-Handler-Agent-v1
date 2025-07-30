@@ -10,7 +10,7 @@ const pulseAnimation = keyframes`
   }
   50% {
     transform: scale(1.05);
-    box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+    box-shadow: 0 0 0 10px rgba(220, 53, 69, 0.0);
   }
   100% {
     transform: scale(1);
@@ -142,6 +142,27 @@ const ErrorMessage = styled.div`
   font-weight: 500;
 `;
 
+const TestButton = styled.button`
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin: 8px 0;
+
+  &:hover:not(:disabled) {
+    background: #0056b3;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+`;
+
 const VoiceControls = memo(({
   isRecording,
   isPaused,
@@ -155,7 +176,8 @@ const VoiceControls = memo(({
   isProcessing,
   isInitialized,
   isAutoRecordingPending,
-  onDeviceChange
+  onDeviceChange,
+  onManualRecordingTest // Add this new prop
 }) => {
   // Memoize device name calculation
   const currentDeviceName = useMemo(() => {
@@ -216,6 +238,14 @@ const VoiceControls = memo(({
           ⚠️ {error}
         </ErrorMessage>
       )}
+
+      {/* Manual test button for debugging */}
+      <TestButton 
+        onClick={onManualRecordingTest}
+        disabled={isProcessing}
+      >
+        🔧 Test Recording Manually
+      </TestButton>
 
       <VisualizerContainer 
         $show={isRecording || isPaused} 

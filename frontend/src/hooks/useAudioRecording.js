@@ -98,14 +98,19 @@ const useAudioRecording = () => {
   // Initialize audio recording
   const initializeRecording = useCallback(async () => {
     try {
+      console.log('initializeRecording called');
       setError(null);
       
       // Get devices and create stream
+      console.log('Getting audio devices...');
       await getAudioDevices();
+      console.log('Creating stream...');
       const stream = await createStream();
+      console.log('Stream created:', stream);
       
       // Verify audio tracks
       const audioTracks = stream.getAudioTracks();
+      console.log('Audio tracks found:', audioTracks.length);
       if (audioTracks.length === 0) {
         throw new Error('No audio tracks found in the stream');
       }
@@ -113,6 +118,7 @@ const useAudioRecording = () => {
       streamRef.current = stream;
 
       // Set up audio analysis
+      console.log('Setting up audio analysis...');
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const analyzer = audioContext.createAnalyser();
       const microphone = audioContext.createMediaStreamSource(stream);
@@ -124,6 +130,7 @@ const useAudioRecording = () => {
       analyzerRef.current = analyzer;
 
       // Create MediaRecorder
+      console.log('Creating MediaRecorder...');
       const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
@@ -159,20 +166,33 @@ const useAudioRecording = () => {
         setError(`Recording error: ${event.error.message}`);
       };
 
+      console.log('Setting isInitialized to true');
       setIsInitialized(true);
     } catch (err) {
+      console.error('initializeRecording failed:', err);
       setError(`Failed to initialize recording: ${err.message}`);
     }
   }, [selectedDeviceId, getAudioDevices, createStream, mimeType]);
 
   // Start recording
   const startRecording = useCallback(async () => {
+    console.log('startRecording called with isInitialized:', isInitialized);
+    
     if (!isInitialized) {
+      console.log('Not initialized, calling initializeRecording...');
       await initializeRecording();
+      console.log('After initialization, isInitialized should be true');
     }
+
+    console.log('Checking refs:', { 
+      hasMediaRecorder: !!mediaRecorderRef.current, 
+      hasStream: !!streamRef.current,
+      streamActive: streamRef.current?.active
+    });
 
     if (mediaRecorderRef.current && streamRef.current) {
       try {
+        console.log('Setting up recording...');
         setError(null);
         setAudioBlob(null);
         
@@ -184,11 +204,13 @@ const useAudioRecording = () => {
 
         // Resume AudioContext if suspended
         if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          console.log('Resuming suspended AudioContext...');
           await audioContextRef.current.resume();
         }
 
         // Ensure stream is active
         if (!streamRef.current.active) {
+          console.log('Stream not active, re-initializing...');
           await initializeRecording();
           if (!streamRef.current.active) {
             throw new Error('Failed to activate audio stream');
@@ -196,9 +218,11 @@ const useAudioRecording = () => {
         }
 
         // Clear chunks and start recording
+        console.log('Starting MediaRecorder...');
         chunksRef.current = [];
         mediaRecorderRef.current.start(DATA_COLLECTION_INTERVAL);
         
+        console.log('Setting recording states...');
         setIsRecording(true);
         setIsPaused(false);
         setRecordingTime(0);
@@ -210,11 +234,18 @@ const useAudioRecording = () => {
         
         // Start visualization
         startAudioVisualization();
+        console.log('Recording started successfully');
       } catch (err) {
+        console.error('Error in startRecording try block:', err);
         setError(`Failed to start recording: ${err.message}`);
       }
     } else {
-      setError('Recording not properly initialized. Please refresh and try again.');
+      const errorMsg = 'Recording not properly initialized. Please refresh and try again.';
+      console.error(errorMsg, {
+        hasMediaRecorder: !!mediaRecorderRef.current,
+        hasStream: !!streamRef.current
+      });
+      setError(errorMsg);
     }
   }, [isInitialized, initializeRecording, audioURL]);
 
@@ -339,11 +370,16 @@ const useAudioRecording = () => {
 
   // Toggle recording
   const toggleRecording = useCallback(() => {
+    console.log('toggleRecording called with states:', { isRecording, isPaused });
+    
     if (!isRecording) {
+      console.log('Starting recording...');
       return startRecording();
     } else if (isPaused) {
+      console.log('Resuming recording...');
       resumeRecording();
     } else {
+      console.log('Pausing recording...');
       pauseRecording();
     }
   }, [isRecording, isPaused, startRecording, pauseRecording, resumeRecording]);
@@ -579,9 +615,10 @@ const useAudioRecording = () => {
   // Auto-initialize on mount
   useEffect(() => {
     if (!isInitialized) {
+      console.log('Auto-initializing audio recording...');
       initializeRecording().catch(console.error);
     }
-  }, []);
+  }, [isInitialized, initializeRecording]);
 
   // Cleanup on unmount
   useEffect(() => {

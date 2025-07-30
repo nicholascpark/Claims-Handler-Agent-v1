@@ -240,17 +240,44 @@ const ChatInterface = memo(({
   const startAutoRecording = useCallback(async () => {
     try {
       console.log('=== Auto-starting recording ===');
-      await toggleRecording();
+      console.log('Current states:', {
+        isInitialized,
+        isRecording,
+        isPaused,
+        isProcessing,
+        conversationTurn,
+        isAutoRecordingPending
+      });
+      
+      // Double-check initialization before attempting to record
+      if (!isInitialized) {
+        console.log('Audio recording not initialized, attempting to initialize...');
+        toast.info('Initializing microphone...');
+        // The toggleRecording function will handle initialization
+      }
+      
+      console.log('About to call toggleRecording...');
+      const result = await toggleRecording();
+      console.log('toggleRecording result:', result);
+      
       setConversationTurn('user_speaking');
       setIsAutoRecordingPending(false);
       toast.success('🎤 Your turn - speak now!');
+      console.log('Auto-recording started successfully');
     } catch (error) {
       console.error('Auto-recording failed:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        isInitialized,
+        isRecording,
+        isPaused
+      });
       toast.error(`Auto-recording failed: ${error.message}`);
       setConversationTurn('user_turn');
       setIsAutoRecordingPending(false);
     }
-  }, [toggleRecording, setConversationTurn, setIsAutoRecordingPending]);
+  }, [toggleRecording, setConversationTurn, setIsAutoRecordingPending, isInitialized, isRecording, isPaused, isProcessing, conversationTurn, isAutoRecordingPending]);
 
   // Manage conversation turn transitions
   useEffect(() => {
@@ -262,12 +289,11 @@ const ChatInterface = memo(({
       setTurnTransitionDelay(delay);
       
       turnTimeoutRef.current = setTimeout(() => {
+        console.log('Timeout: Setting conversation turn to user_turn and isAutoRecordingPending to true');
         setConversationTurn('user_turn');
         setIsAutoRecordingPending(true);
         
-        if (isInitialized && !isRecording && !isPaused && !isProcessing) {
-          startAutoRecording();
-        }
+        // Let the useEffect handle auto-recording after state updates
       }, delay);
     }
   }, [conversationTurn, aiTextDisplayed, aiAudioComplete, audioPlayStartTime, isInitialized, isRecording, isPaused, isProcessing, startAutoRecording, setConversationTurn, setTurnTransitionDelay, setIsAutoRecordingPending]);
@@ -294,7 +320,17 @@ const ChatInterface = memo(({
 
   // Handle user turn when conditions change
   useEffect(() => {
-    if (conversationTurn === 'user_turn' && isInitialized && !isRecording && !isPaused && !isProcessing && !isAutoRecordingPending) {
+    console.log('Auto-recording effect triggered:', {
+      conversationTurn,
+      isInitialized,
+      isRecording,
+      isPaused,
+      isProcessing,
+      isAutoRecordingPending
+    });
+    
+    if (conversationTurn === 'user_turn' && isInitialized && !isRecording && !isPaused && !isProcessing && isAutoRecordingPending) {
+      console.log('Conditions met - starting auto-recording');
       startAutoRecording();
     }
   }, [conversationTurn, isInitialized, isRecording, isPaused, isProcessing, isAutoRecordingPending, startAutoRecording]);
@@ -530,6 +566,85 @@ const ChatInterface = memo(({
     }
   }, [changeDevice]);
 
+  const handleManualRecordingTest = useCallback(async () => {
+    try {
+      console.log('=== Manual Recording Test ===');
+      console.log('Current states before test:', {
+        isInitialized,
+        isRecording,
+        isPaused,
+        conversationTurn
+      });
+      
+      toast.info('Testing microphone access...');
+      await toggleRecording();
+      
+      if (!isRecording) {
+        toast.success('Manual recording test successful! Microphone is working.');
+      }
+    } catch (error) {
+      console.error('Manual recording test failed:', error);
+      toast.error(`Manual test failed: ${error.message}`);
+    }
+  }, [toggleRecording, isInitialized, isRecording, isPaused, conversationTurn]);
+
+  const runDiagnostics = useCallback(async () => {
+    console.log('=== AUDIO DIAGNOSTICS ===');
+    
+    // Check browser capabilities
+    console.log('Browser capabilities:', {
+      hasGetUserMedia: !!navigator.mediaDevices?.getUserMedia,
+      hasMediaRecorder: !!window.MediaRecorder,
+      hasAudioContext: !!(window.AudioContext || window.webkitAudioContext)
+    });
+    
+    // Check current permissions
+    try {
+      const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+      console.log('Microphone permission:', permissionStatus.state);
+    } catch (e) {
+      console.log('Permission query not supported');
+    }
+    
+    // Check available devices
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter(d => d.kind === 'audioinput');
+      console.log('Available audio input devices:', audioInputs.length);
+      audioInputs.forEach((device, index) => {
+        console.log(`  Device ${index}:`, device.label || 'Unknown', device.deviceId);
+      });
+    } catch (e) {
+      console.error('Failed to enumerate devices:', e);
+    }
+    
+    // Check hook states
+    console.log('Recording hook states:', {
+      isInitialized,
+      isRecording,
+      isPaused,
+      recordingError,
+      availableDevices: availableDevices.length,
+      selectedDeviceId
+    });
+    
+    // Check conversation states
+    console.log('Conversation states:', {
+      conversationTurn,
+      isAutoRecordingPending,
+      isProcessing,
+      aiTextDisplayed,
+      aiAudioComplete
+    });
+    
+    console.log('=== END DIAGNOSTICS ===');
+  }, [isInitialized, isRecording, isPaused, recordingError, availableDevices, selectedDeviceId, conversationTurn, isAutoRecordingPending, isProcessing, aiTextDisplayed, aiAudioComplete]);
+
+  // Run diagnostics on mount and when key states change
+  useEffect(() => {
+    runDiagnostics();
+  }, [conversationTurn, isAutoRecordingPending]);
+
   // Memoized voice controls props
   const voiceControlsProps = useMemo(() => ({
     isRecording,
@@ -544,8 +659,9 @@ const ChatInterface = memo(({
     isProcessing,
     isInitialized,
     isAutoRecordingPending,
-    onDeviceChange: handleDeviceChange
-  }), [isRecording, isPaused, recordingTime, audioLevels, recordingError, availableDevices, selectedDeviceId, audioURL, conversationTurn, isProcessing, isInitialized, isAutoRecordingPending, handleDeviceChange]);
+    onDeviceChange: handleDeviceChange,
+    onManualRecordingTest: handleManualRecordingTest
+  }), [isRecording, isPaused, recordingTime, audioLevels, recordingError, availableDevices, selectedDeviceId, audioURL, conversationTurn, isProcessing, isInitialized, isAutoRecordingPending, handleDeviceChange, handleManualRecordingTest]);
 
   // Memoized text input props
   const textInputProps = useMemo(() => ({
