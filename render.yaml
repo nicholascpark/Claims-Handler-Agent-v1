@@ -20,23 +20,4 @@ services:
       #   sync: false  # This will be set manually in Render dashboard
       # - key: AZURE_OPENAI_ENDPOINT
       #   sync: false
-    healthCheckPath: /health
-
-  # Frontend Static Site
-  - type: static
-    name: intactbot-frontend
-    buildCommand: cd frontend && npm ci && npm run build
-    staticPublishPath: frontend/build
-    plan: free
-    envVars:
-      - key: NODE_VERSION
-        value: 18.17.0
-      - key: REACT_APP_API_URL
-        fromService:
-          type: web
-          name: intactbot-backend
-          envVarKey: RENDER_EXTERNAL_URL
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html 
+    healthCheckPath: /health 
