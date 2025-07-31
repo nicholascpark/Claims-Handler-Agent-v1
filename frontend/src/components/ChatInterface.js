@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import styled from 'styled-components';
-import { FaTrash } from 'react-icons/fa';
+import { FaTrash, FaEye, FaEyeSlash } from 'react-icons/fa';
 import { toast } from 'react-toastify';
 
 // Import optimized components
@@ -27,24 +27,75 @@ const MainContainer = styled.div`
 
 const ChatContainer = styled.div`
   display: grid;
-  grid-template-columns: 1fr 560px;
+  grid-template-columns: ${props => props.$isChatVisible ? '1fr 560px' : '560px'};
+  justify-content: ${props => props.$isChatVisible ? 'normal' : 'center'};
   gap: 24px;
   min-height: 60vh;
+  transition: all 0.3s ease;
   
   @media (max-width: 1200px) {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto;
+    justify-content: normal;
   }
 `;
 
 const LeftPanel = styled.div`
-  display: flex;
+  display: ${props => props.$isVisible ? 'flex' : 'none'};
   flex-direction: column;
   background: white;
   border-radius: 16px;
   border: 2px solid #e0e0e0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   overflow: hidden;
+  transition: all 0.3s ease;
+  
+  @media (max-width: 1200px) {
+    display: ${props => props.$isVisible ? 'flex' : 'none'};
+  }
+`;
+
+const ChatToggleContainer = styled.div`
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+`;
+
+const ChatToggleButton = styled.button`
+  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+
+  &:hover {
+    background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+`;
+
+const PayloadWrapper = styled.div`
+  width: ${props => props.$isChatVisible ? '560px' : '100%'};
+  max-width: ${props => props.$isChatVisible ? '560px' : '1200px'};
+  transition: all 0.3s ease;
+  
+  @media (max-width: 1200px) {
+    width: 100%;
+    max-width: 100%;
+  }
 `;
 
 const ChatHeader = styled.div`
@@ -166,6 +217,7 @@ const ChatInterface = memo(({
 }) => {
   const [textMessage, setTextMessage] = useState('');
   const [isTextSending, setIsTextSending] = useState(false);
+  const [isChatVisible, setIsChatVisible] = useState(false); // Default to hidden as requested
 
   // Use custom hook for conversation state
   const conversationState = useConversationState(initialAudio);
@@ -793,8 +845,12 @@ const ChatInterface = memo(({
     isInitialized,
     isAutoRecordingPending,
     onDeviceChange: handleDeviceChange,
-    onManualRecordingTest: handleManualRecordingTest
-  }), [isRecording, isPaused, recordingTime, audioLevels, recordingError, availableDevices, selectedDeviceId, audioURL, conversationTurn, isProcessing, isInitialized, isAutoRecordingPending, handleDeviceChange, handleManualRecordingTest]);
+    onManualRecordingTest: handleManualRecordingTest,
+    // Audio control button handlers
+    onSendRecording: handleStopAndSend,
+    onToggleRecording: handleToggleRecording,
+    onStartOver: handleStartOver
+  }), [isRecording, isPaused, recordingTime, audioLevels, recordingError, availableDevices, selectedDeviceId, audioURL, conversationTurn, isProcessing, isInitialized, isAutoRecordingPending, handleDeviceChange, handleManualRecordingTest, handleStopAndSend, handleToggleRecording, handleStartOver]);
 
   // Memoized text input props
   const textInputProps = useMemo(() => ({
@@ -814,6 +870,11 @@ const ChatInterface = memo(({
     onStopRecording: handleStopRecording
   }), [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn, isAutoRecordingPending, handleTextChange, handleSendMessage, handleKeyPress, handleToggleRecording, handleStartOver, handleStopRecording]);
 
+  // Toggle chat visibility
+  const toggleChatVisibility = useCallback(() => {
+    setIsChatVisible(prev => !prev);
+  }, []);
+
   return (
     <MainContainer>
       {/* Audio Controls Section - Above the dual-pane layout */}
@@ -827,9 +888,17 @@ const ChatInterface = memo(({
         voiceControlsProps={voiceControlsProps}
       />
 
+      {/* Chat Toggle Button - Always visible */}
+      <ChatToggleContainer>
+        <ChatToggleButton onClick={toggleChatVisibility}>
+          {isChatVisible ? <FaEyeSlash /> : <FaEye />}
+          {isChatVisible ? 'Hide Conversation History' : 'Show Conversation History'}
+        </ChatToggleButton>
+      </ChatToggleContainer>
+
       {/* Dual-pane layout */}
-      <ChatContainer>
-        <LeftPanel>
+      <ChatContainer $isChatVisible={isChatVisible}>
+        <LeftPanel $isVisible={isChatVisible}>
           <ChatHeader>
             <ChatTitle>💬 Conversation History</ChatTitle>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -872,10 +941,12 @@ const ChatInterface = memo(({
           </ChatBody>
         </LeftPanel>
 
-        <PayloadDisplay
-          payload={payload}
-          isFormComplete={isFormComplete}
-        />
+        <PayloadWrapper $isChatVisible={isChatVisible}>
+          <PayloadDisplay
+            payload={payload}
+            isFormComplete={isFormComplete}
+          />
+        </PayloadWrapper>
       </ChatContainer>
     </MainContainer>
   );

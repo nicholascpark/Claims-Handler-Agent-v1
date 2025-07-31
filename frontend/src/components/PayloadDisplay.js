@@ -10,10 +10,12 @@ const PayloadContainer = styled.div`
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   overflow: hidden;
   height: fit-content;
-  max-height: 112vh;
+  max-height: 140vh;
+  width: 125%;
   
   @media (max-width: 1200px) {
-    max-height: 560px;
+    max-height: 700px;
+    width: 125%;
   }
 `;
 
@@ -67,7 +69,7 @@ const ExpandButton = styled.button`
 `;
 
 const PayloadContent = styled.div`
-  height: ${props => props.$expanded ? 'auto' : '560px'};
+  height: ${props => props.$expanded ? 'auto' : '700px'};
   overflow-y: auto;
   transition: height 0.3s ease;
 `;
@@ -122,7 +124,7 @@ const CodeBlock = styled.pre`
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-x: auto;
-  max-height: 500px;
+  max-height: 625px;
   overflow-y: auto;
 
   /* JSON Syntax Highlighting */

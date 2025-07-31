@@ -154,9 +154,110 @@ const VisualizerContainer = styled.div`
   transition: all 0.3s ease;
   
   ${props => props.$show && css`
-    border-color: ${props.$isRecording ? '#dc3545' : '#ffc107'};
-    background: ${props.$isRecording ? 'rgba(220, 53, 69, 0.05)' : 'rgba(255, 193, 7, 0.05)'};
+    border-color: ${props.$isRecording ? '#dc3545' : props.$isAISpeaking ? '#6c94ff' : '#ffc107'};
+    background: ${props.$isRecording ? 'rgba(220, 53, 69, 0.05)' : props.$isAISpeaking ? 'rgba(108, 148, 255, 0.05)' : 'rgba(255, 193, 7, 0.05)'};
   `}
+`;
+
+const AudioButtonsContainer = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+`;
+
+const CircularButton = styled.button`
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  font-weight: bold;
+  color: white;
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-1px) scale(1.05);
+  }
+  
+  &:active:not(:disabled) {
+    transform: translateY(0) scale(0.95);
+  }
+  
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+`;
+
+const SendRecordingButton = styled(CircularButton)`
+  background: ${props => props.$isRecording || props.$isPaused ? '#dc3545' : '#6c757d'};
+  
+  &:hover:not(:disabled) {
+    background: ${props => props.$isRecording || props.$isPaused ? '#c82333' : '#5a6268'};
+    transform: translateY(-1px) scale(1.05);
+  }
+`;
+
+const PauseResumeButton = styled(CircularButton)`
+  background: ${props => props.$isRecording && !props.$isPaused ? '#ffc107' : '#28a745'};
+  color: ${props => props.$isRecording && !props.$isPaused ? '#000' : 'white'};
+  
+  &:hover:not(:disabled) {
+    background: ${props => props.$isRecording && !props.$isPaused ? '#e0a800' : '#218838'};
+    transform: translateY(-1px) scale(1.05);
+  }
+`;
+
+const StartOverButton = styled(CircularButton)`
+  background: #6c757d;
+  
+  &:hover:not(:disabled) {
+    background: #5a6268;
+    transform: translateY(-1px) scale(1.05);
+  }
+`;
+
+const UpArrow = styled.div`
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 8px solid currentColor;
+`;
+
+const PauseSymbol = styled.div`
+  display: flex;
+  gap: 2px;
+  
+  &::before,
+  &::after {
+    content: '';
+    width: 3px;
+    height: 12px;
+    background: currentColor;
+  }
+`;
+
+const RewindSymbol = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  
+  &::before,
+  &::after {
+    content: '';
+    width: 0;
+    height: 0;
+    border-right: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+  }
 `;
 
 const ErrorMessage = styled.div`
@@ -184,7 +285,11 @@ const VoiceControls = memo(({
   isProcessing,
   isInitialized,
   isAutoRecordingPending,
-  onDeviceChange
+  onDeviceChange,
+  // New props for audio control buttons
+  onSendRecording,
+  onToggleRecording,
+  onStartOver
 }) => {
   // Memoize device name calculation
   const currentDeviceName = useMemo(() => {
@@ -228,7 +333,7 @@ const VoiceControls = memo(({
         </RecordingTimer>
       </StatusRow>
 
-      {/* Controls row with microphone info and visualizer */}
+      {/* Controls row with microphone info, visualizer, and audio buttons */}
       <ControlsRow>
         {/* Microphone device info */}
         <MicrophoneInfo>
@@ -246,17 +351,53 @@ const VoiceControls = memo(({
 
         {/* Sound wave visualizer */}
         <VisualizerContainer 
-          $show={isRecording || isPaused} 
+          $show={isRecording || isPaused || conversationTurn === 'ai_speaking'} 
           $isRecording={isRecording && !isPaused}
+          $isAISpeaking={conversationTurn === 'ai_speaking'}
         >
           <SoundWaveVisualizer
             audioLevels={audioLevels}
             isRecording={isRecording && !isPaused}
             isPaused={isPaused}
-            show={isRecording || isPaused}
+            isAISpeaking={conversationTurn === 'ai_speaking'}
+            show={isRecording || isPaused || conversationTurn === 'ai_speaking'}
             audioURL={isPaused ? audioURL : null}
           />
         </VisualizerContainer>
+
+        {/* Audio control buttons */}
+        <AudioButtonsContainer>
+          {/* Send Recording Button (Up Arrow) */}
+          <SendRecordingButton
+            onClick={onSendRecording}
+            disabled={(!isRecording && !isPaused) || isProcessing}
+            $isRecording={isRecording}
+            $isPaused={isPaused}
+            title="Send Recording"
+          >
+            <UpArrow />
+          </SendRecordingButton>
+
+          {/* Pause/Resume Button */}
+          <PauseResumeButton
+            onClick={onToggleRecording}
+            disabled={isProcessing}
+            $isRecording={isRecording}
+            $isPaused={isPaused}
+            title={isRecording && !isPaused ? 'Pause' : isPaused ? 'Resume' : 'Record'}
+          >
+            {isRecording && !isPaused ? <PauseSymbol /> : <FaMicrophone />}
+          </PauseResumeButton>
+
+          {/* Start Over Button (Rewind Symbol) */}
+          <StartOverButton
+            onClick={onStartOver}
+            disabled={(!isRecording && !isPaused) || isProcessing}
+            title="Start Over"
+          >
+            <RewindSymbol />
+          </StartOverButton>
+        </AudioButtonsContainer>
       </ControlsRow>
 
       {error && (

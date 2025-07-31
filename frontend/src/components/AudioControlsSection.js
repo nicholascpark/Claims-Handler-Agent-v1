@@ -1,6 +1,5 @@
 import React, { memo } from 'react';
 import styled from 'styled-components';
-import ConversationIndicator from './ConversationTurnIndicator';
 import VoiceControls from './VoiceControls';
 import AudioPlayer from './AudioPlayer';
 

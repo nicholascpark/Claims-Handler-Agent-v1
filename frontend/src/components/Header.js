@@ -60,7 +60,7 @@ const Header = () => {
     <HeaderContainer>
       <HeaderContent>
         <CenterContent>
-          <MainTitle>IntactBot-FNOL-v1.0</MainTitle>
+          <MainTitle>FNOL Intact v0.2</MainTitle>
           <Subtitle>First Notice of Loss Processing Agent</Subtitle>
         </CenterContent>
         
