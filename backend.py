@@ -83,9 +83,24 @@ CLEANUP_INTERVAL_MINUTES = 10
 app = FastAPI(title="IntactBot FNOL Agent API", version="1.0.0")
 
 # Enable CORS for React frontend
+allowed_origins = [
+    "http://localhost:3000", 
+    "http://127.0.0.1:3000"
+]
+
+# Add production origins if environment variables are set
+if os.getenv("FRONTEND_URL"):
+    allowed_origins.append(os.getenv("FRONTEND_URL"))
+if os.getenv("RENDER_EXTERNAL_URL"):
+    allowed_origins.append(os.getenv("RENDER_EXTERNAL_URL"))
+
+# Allow all origins for Render deployments (you can restrict this later)
+if os.getenv("ENVIRONMENT") == "production":
+    allowed_origins.append("https://*.onrender.com")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -726,10 +741,19 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     logger.info("🚀 Starting IntactBot FNOL Agent Backend...")
+    
+    # Get host and port from environment variables for production
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8000"))
+    environment = os.getenv("ENVIRONMENT", "development")
+    
+    # Disable reload in production
+    reload = environment == "development"
+    
     uvicorn.run(
         "backend:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
+        host=host,
+        port=port,
+        reload=reload,
         log_level="info"
     ) 

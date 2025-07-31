@@ -1,0 +1,43 @@
+services:
+  # Backend API Service
+  - type: web
+    name: intactbot-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python backend.py
+    plan: starter
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: ENVIRONMENT
+        value: production
+      # Add your environment variables here
+      # - key: AZURE_OPENAI_API_KEY
+      #   sync: false  # This will be set manually in Render dashboard
+      # - key: AZURE_OPENAI_ENDPOINT
+      #   sync: false
+    healthCheckPath: /health
+
+  # Frontend Static Site
+  - type: web
+    name: intactbot-frontend
+    env: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/build
+    plan: starter
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
+      - key: REACT_APP_API_URL
+        fromService:
+          type: web
+          name: intactbot-backend
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html 

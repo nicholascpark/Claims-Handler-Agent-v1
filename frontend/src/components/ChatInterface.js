@@ -9,7 +9,6 @@ import AudioControlsSection from './AudioControlsSection';
 import MessagesList from './MessagesList';
 import TextInputArea from './TextInputArea';
 import useAudioRecording from '../hooks/useAudioRecording';
-import { getLoadingSound } from '../utils/loadingSound';
 import { 
   playAudioImmediate, 
   stopAllAudio, 
@@ -17,6 +16,7 @@ import {
   getCachedAudio,
   getAudioCacheStats 
 } from '../utils/audioOptimization';
+import { getLoadingSound } from '../utils/loadingSound';
 
 const MainContainer = styled.div`
   display: flex;
@@ -379,13 +379,14 @@ const ChatInterface = memo(({
     }
   }, [toggleRecording, setConversationTurn, setIsAutoRecordingPending, isInitialized, isRecording, isPaused, isProcessing, conversationTurn, isAutoRecordingPending]);
 
-  // Manage conversation turn transitions
+  // Manage conversation turn transitions with reduced delays
   useEffect(() => {
     if (conversationTurn === 'ai_speaking' && aiTextDisplayed && aiAudioComplete) {
       console.log('AI turn complete, transitioning to user turn');
       setConversationTurn('ai_complete');
       
-      const delay = Math.max(800, Math.min(1500, (audioPlayStartTime ? Date.now() - audioPlayStartTime : 1000) * 0.15));
+      // Reduced delay for faster transitions
+      const delay = Math.max(300, Math.min(800, (audioPlayStartTime ? Date.now() - audioPlayStartTime : 500) * 0.1));
       setTurnTransitionDelay(delay);
       
       turnTimeoutRef.current = setTimeout(() => {
@@ -403,12 +404,12 @@ const ChatInterface = memo(({
     let safetyTimeout;
     
     if (conversationTurn === 'ai_speaking' && aiTextDisplayed && currentAudioData) {
-      // Set a safety timeout of 30 seconds to force transition if audio doesn't complete
+      // Reduced safety timeout for more responsive system
       safetyTimeout = setTimeout(() => {
         console.log('Safety timeout: Forcing AI audio completion');
         setAiAudioComplete(true);
         setCurrentAudioData(null);
-      }, 30000); // 30 second safety timeout
+      }, 15000); // Reduced from 30 to 15 seconds
     }
     
     return () => {
@@ -421,12 +422,13 @@ const ChatInterface = memo(({
   // Helper function to start loading sound
   const startLoadingSound = useCallback(async () => {
     try {
+      console.log('Starting AI thinking sound');
       const loadingAudioData = await getLoadingSound();
       setCurrentAudioData(loadingAudioData);
       setIsPlayingLoadingSound(true);
       setAiAudioComplete(false);
     } catch (error) {
-      console.error('Failed to load loading sound:', error);
+      console.error('Failed to load AI thinking sound:', error);
       // Fallback - just clear current audio
       setCurrentAudioData(null);
       setAiAudioComplete(true);
@@ -434,9 +436,9 @@ const ChatInterface = memo(({
   }, [setCurrentAudioData, setIsPlayingLoadingSound, setAiAudioComplete]);
 
   // Helper function to stop loading sound immediately
-  const stopLoadingSound = useCallback((immediate = false) => {
+  const stopLoadingSound = useCallback((immediate = true) => {
     if (isPlayingLoadingSound || immediate) {
-      console.log('Stopping loading sound immediately');
+      console.log('Stopping AI thinking sound immediately');
       setIsPlayingLoadingSound(false);
       setCurrentAudioData(null);
       // Force stop any currently playing audio if immediate termination is requested
@@ -464,29 +466,19 @@ const ChatInterface = memo(({
       setAiAudioComplete(true);
       setCurrentAudioData(null);
     } else if (isPlayingLoadingSound && conversationTurn === 'processing') {
-      // Loading sound completed - check if we should restart or if processing completed
+      // AI thinking sound completed - restart for continuous feedback
       setTimeout(() => {
         // Use current state to check if still processing
         setConversationTurn(currentTurn => {
           console.log('Checking if still processing, current turn:', currentTurn);
           
-          // Only restart loading sound if we're still processing and haven't completed early
+          // Only restart thinking sound if we're still processing
           if (currentTurn === 'processing') {
-            // Check if enough time has passed for normal loading continuation
-            const now = Date.now();
-            const timeSinceProcessingStart = now - (window.processingStartTime || now);
-            
-            // If processing has been going for less than 2 seconds, continue loading sound
-            if (timeSinceProcessingStart < 2000) {
-              startLoadingSound();
-            } else {
-              // Processing is taking too long, might be an edge case - just continue normally
-              startLoadingSound();
-            }
+            startLoadingSound();
           }
           return currentTurn; // Return unchanged
         });
-      }, 50); // Reduced delay for more responsive loading sound management
+      }, 10); // Minimal delay for immediate restart
     }
   }, [setAiAudioComplete, setCurrentAudioData, setConversationTurn, isPlayingLoadingSound, startLoadingSound, conversationTurn]);
 
@@ -559,15 +551,16 @@ const ChatInterface = memo(({
           return;
         }
         
-        // Calculate if processing completed early
+        // Calculate if processing completed early - be more aggressive about early completion
         const loadingDuration = Date.now() - loadingStartTime;
         const completedEarly = response.completedEarly || 
-                             (response.processing_time && (response.processing_time * 1000) < (loadingDuration * 0.7));
+                             (response.processing_time && (response.processing_time * 1000) < loadingDuration) || // Any completion faster than loading time
+                             (loadingDuration < 2000); // Always consider completion under 2 seconds as early
         
         console.log(`Queue processing - Early completion: ${completedEarly}, Server time: ${response.processing_time}s, Loading time: ${(loadingDuration/1000).toFixed(2)}s, Cached: ${response.cached}`);
         
-        // Stop loading sound immediately if completed early, otherwise normal stop
-        stopLoadingSound(completedEarly);
+        // Stop loading sound immediately for any completion
+        stopLoadingSound(true);
         
         if (response.audio_data) {
           // Cache the audio response for potential future use
@@ -575,27 +568,21 @@ const ChatInterface = memo(({
             cacheAudio(response.message, response.audio_data);
           }
           
-          // If completed early, use immediate playback for zero delay
-          if (completedEarly) {
-            console.log('Using immediate audio playback for early completion');
-            setConversationTurn('ai_speaking');
-            setAiAudioComplete(false);
-            
-            // Play audio immediately without delay
-            playAudioImmediate(
-              response.audio_data,
-              () => handleAudioPlay(),
-              () => handleAudioEnd()
-            ).catch(error => {
-              console.error('Immediate audio playback failed:', error);
-              // Fallback to regular audio handling
-              setCurrentAudioData(response.audio_data);
-            });
-          } else {
+          // Always use immediate playback for zero delay
+          console.log('Using immediate audio playback for seamless transition');
+          setConversationTurn('ai_speaking');
+          setAiAudioComplete(false);
+          
+          // Play audio immediately without delay
+          playAudioImmediate(
+            response.audio_data,
+            () => handleAudioPlay(),
+            () => handleAudioEnd()
+          ).catch(error => {
+            console.error('Immediate audio playback failed:', error);
+            // Fallback to regular audio handling
             setCurrentAudioData(response.audio_data);
-            setAiAudioComplete(false);
-            setConversationTurn('ai_speaking');
-          }
+          });
         } else {
           setCurrentAudioData(null);
           setAiAudioComplete(true);
@@ -682,15 +669,16 @@ const ChatInterface = memo(({
     try {
       const response = await onSendVoiceMessage(audioData);
       
-      // Calculate if processing completed early
+      // Calculate if processing completed early - be more aggressive about early completion
       const loadingDuration = Date.now() - loadingStartTime;
       const completedEarly = response.completedEarly || 
-                           (response.processing_time && (response.processing_time * 1000) < (loadingDuration * 0.7));
+                           (response.processing_time && (response.processing_time * 1000) < loadingDuration) || // Any completion faster than loading time
+                           (loadingDuration < 2000); // Always consider completion under 2 seconds as early
       
       console.log(`Voice processing - Early completion: ${completedEarly}, Server time: ${response.processing_time}s, Loading time: ${(loadingDuration/1000).toFixed(2)}s, Cached: ${response.cached}`);
       
-      // Stop loading sound immediately if completed early, otherwise normal stop
-      stopLoadingSound(completedEarly);
+      // Stop loading sound immediately for any completion
+      stopLoadingSound(true);
       
       if (response.audio_data) {
         // Cache the audio response for potential future use
@@ -698,27 +686,21 @@ const ChatInterface = memo(({
           cacheAudio(response.message, response.audio_data);
         }
         
-        // If completed early, use immediate playback for zero delay
-        if (completedEarly) {
-          console.log('Using immediate audio playback for early voice completion');
-          setConversationTurn('ai_speaking');
-          setAiAudioComplete(false);
-          
-          // Play audio immediately without delay
-          playAudioImmediate(
-            response.audio_data,
-            () => handleAudioPlay(),
-            () => handleAudioEnd()
-          ).catch(error => {
-            console.error('Immediate audio playback failed:', error);
-            // Fallback to regular audio handling
-            setCurrentAudioData(response.audio_data);
-          });
-        } else {
+        // Always use immediate playback for zero delay
+        console.log('Using immediate audio playback for seamless voice transition');
+        setConversationTurn('ai_speaking');
+        setAiAudioComplete(false);
+        
+        // Play audio immediately without delay
+        playAudioImmediate(
+          response.audio_data,
+          () => handleAudioPlay(),
+          () => handleAudioEnd()
+        ).catch(error => {
+          console.error('Immediate audio playback failed:', error);
+          // Fallback to regular audio handling
           setCurrentAudioData(response.audio_data);
-          setAiAudioComplete(false);
-          setConversationTurn('ai_speaking');
-        }
+        });
       }
       
       return response;
@@ -741,19 +723,19 @@ const ChatInterface = memo(({
     }
   }, [onSendVoiceMessage, setConversationTurn, setIsAutoRecordingPending, setCurrentAudioData, setAiAudioComplete, setIsProcessing, startLoadingSound, stopLoadingSound, isProcessingQueue, isProcessing, interruptProcessing, handleAudioPlay, handleAudioEnd, messageQueue.length, setMessageQueue]);
 
-  // Process message queue with proper batching for rapid successive inputs
+  // Process message queue with immediate processing for responsive UI
   useEffect(() => {
     if (messageQueue.length > 0 && !isProcessingQueue && !isProcessing) {
-      console.log(`Queue updated: ${messageQueue.length} messages - implementing smart batching`);
+      console.log(`Queue updated: ${messageQueue.length} messages - processing immediately for responsiveness`);
       
-      // Always use a batching window to catch rapid successive inputs
-      // This ensures messages sent within 750ms are batched together
+      // Reduced batching window for more immediate processing
+      // Still allows batching for rapid successive inputs but reduces delay
       const batchTimeout = setTimeout(() => {
         if (messageQueue.length > 0 && !isProcessingQueue && !isProcessing) {
           console.log(`Processing batch of ${messageQueue.length} messages`);
           processMessageQueue();
         }
-      }, 750); // 750ms batching window for rapid inputs - generous for human typing patterns
+      }, 200); // Reduced from 750ms to 200ms for faster response
       
       return () => clearTimeout(batchTimeout);
     }
@@ -1035,6 +1017,13 @@ const ChatInterface = memo(({
   useEffect(() => {
     runDiagnostics();
   }, [conversationTurn, isAutoRecordingPending]);
+
+  // Cleanup function - no longer needed for Tone.js
+  useEffect(() => {
+    return () => {
+      console.log('Cleaning up chat interface');
+    };
+  }, []);
 
   // Performance monitoring (optional debug display)
   const [showPerformanceStats, setShowPerformanceStats] = useState(false);

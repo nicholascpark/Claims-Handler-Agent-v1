@@ -1,6 +1,6 @@
 /**
- * Utility for generating a subtle loading sound using Web Audio API
- * Creates continuous ambient beeps to indicate processing
+ * Utility for generating an aesthetic AI "thinking" sound using Web Audio API
+ * Creates a gentle, harmonic pulsing pattern that evokes AI cognitive processing
  */
 
 export const generateLoadingSound = () => {
@@ -8,57 +8,63 @@ export const generateLoadingSound = () => {
     try {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const sampleRate = audioContext.sampleRate;
-      const totalDuration = 4.0; // Extended duration: 4 seconds for smoother continuity
-      const beepDuration = 0.2; // Each beep: 200ms (slightly longer)
-      const pauseDuration = 0.8; // Longer pause between beeps: 800ms (slower frequency)
+      const totalDuration = 3.0; // 3 seconds for a complete thinking cycle
       const frameCount = sampleRate * totalDuration;
       
       const audioBuffer = audioContext.createBuffer(1, frameCount, sampleRate);
       const channelData = audioBuffer.getChannelData(0);
       
-      // Parameters for ambient beeps
-      const frequency = 440; // Lower, warmer frequency (A4 note - more musical/ambient)
-      const volume = 0.06; // Even quieter, more subtle volume
+      // AI thinking sound parameters - harmonic and ambient
+      const baseFrequency = 220; // Low A note - foundational thinking tone
+      const harmonicFreq1 = 330; // Perfect fifth - adds intelligence
+      const harmonicFreq2 = 440; // Octave - adds clarity
+      const pulseBeatFrequency = 0.8; // Gentle pulsing like breathing/heartbeat
+      const volume = 0.03; // Very subtle - thoughtful presence
       
       // Clear the entire buffer first
       for (let i = 0; i < frameCount; i++) {
         channelData[i] = 0;
       }
       
-      // Generate beeps to fill the duration
-      const beepCycleDuration = beepDuration + pauseDuration;
-      const numBeeps = Math.floor(totalDuration / beepCycleDuration);
-      
-      for (let beepIndex = 0; beepIndex < numBeeps; beepIndex++) {
-        const beepStartTime = beepIndex * beepCycleDuration;
-        const beepStartFrame = Math.floor(beepStartTime * sampleRate);
-        const beepEndFrame = Math.floor((beepStartTime + beepDuration) * sampleRate);
+      // Generate the AI thinking pattern
+      for (let i = 0; i < frameCount; i++) {
+        const time = i / sampleRate;
         
-        for (let i = beepStartFrame; i < beepEndFrame && i < frameCount; i++) {
-          const timeInBeep = (i - beepStartFrame) / sampleRate;
-          
-          // Create a smooth, ambient envelope for each beep (longer fade)
-          let envelope = 1;
-          const fadeTime = 0.05; // 50ms fade in/out for smoother, more ambient sound
-          const fadeFrames = fadeTime * sampleRate;
-          
-          if (i - beepStartFrame < fadeFrames) {
-            // Fade in
-            envelope = (i - beepStartFrame) / fadeFrames;
-          } else if (beepEndFrame - i < fadeFrames) {
-            // Fade out
-            envelope = (beepEndFrame - i) / fadeFrames;
-          }
-          
-          // Apply exponential curve for more natural sound
-          envelope = Math.pow(envelope, 0.7);
-          
-          // Generate sine wave with slight harmonic for warmth
-          const mainTone = Math.sin(2 * Math.PI * frequency * timeInBeep);
-          const harmonic = 0.1 * Math.sin(2 * Math.PI * frequency * 2 * timeInBeep); // Subtle octave harmonic
-          const sample = volume * envelope * (mainTone + harmonic);
-          channelData[i] = sample;
+        // Create a gentle breathing/pulsing envelope
+        const breathingCycle = Math.sin(2 * Math.PI * pulseBeatFrequency * time);
+        const pulseEnvelope = 0.3 + 0.7 * (breathingCycle * 0.5 + 0.5); // Ranges from 0.3 to 1.0
+        
+        // Create smooth fade-in and fade-out for the entire duration
+        let globalEnvelope = 1;
+        const fadeTime = 0.2; // 200ms fade
+        const fadeFrames = fadeTime * sampleRate;
+        
+        if (i < fadeFrames) {
+          // Fade in
+          globalEnvelope = i / fadeFrames;
+        } else if (i > frameCount - fadeFrames) {
+          // Fade out
+          globalEnvelope = (frameCount - i) / fadeFrames;
         }
+        
+        // Apply smooth curves for natural, organic feeling
+        globalEnvelope = Math.pow(globalEnvelope, 0.6);
+        pulseEnvelope = Math.pow(pulseEnvelope, 0.8);
+        
+        // Generate harmonic layers for AI intelligence feeling
+        const baseTone = Math.sin(2 * Math.PI * baseFrequency * time);
+        const harmonic1 = 0.4 * Math.sin(2 * Math.PI * harmonicFreq1 * time);
+        const harmonic2 = 0.2 * Math.sin(2 * Math.PI * harmonicFreq2 * time);
+        
+        // Add subtle frequency modulation for "neural activity" feeling
+        const neuralModulation = 0.05 * Math.sin(2 * Math.PI * 3.7 * time); // Slight warble
+        const modulatedBase = Math.sin(2 * Math.PI * baseFrequency * time * (1 + neuralModulation));
+        
+        // Combine all elements
+        const thinkingTone = (modulatedBase * 0.6 + harmonic1 + harmonic2);
+        const finalSample = volume * globalEnvelope * pulseEnvelope * thinkingTone;
+        
+        channelData[i] = finalSample;
       }
       
       // Convert to base64 WAV format
@@ -135,9 +141,8 @@ const arrayBufferToBase64 = (buffer) => {
 let cachedLoadingSound = null;
 
 export const getLoadingSound = async () => {
-  if (!cachedLoadingSound) {
-    cachedLoadingSound = await generateLoadingSound();
-  }
+  // Always regenerate for now to use the new AI thinking sound
+  cachedLoadingSound = await generateLoadingSound();
   return cachedLoadingSound;
 };
 
