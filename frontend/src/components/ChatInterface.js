@@ -194,6 +194,7 @@ const ChatInterface = memo(({
     audioLevels,
     error: recordingError,
     toggleRecording,
+    startRecording,
     stopRecording,
     getBase64Audio,
     isInitialized,
@@ -490,11 +491,11 @@ const ChatInterface = memo(({
         await stopRecording();
       }
       // Start a fresh recording
-      await toggleRecording();
+      await startRecording();
     } catch (error) {
       toast.error(`Failed to restart recording: ${error.message}`);
     }
-  }, [isRecording, isPaused, stopRecording, toggleRecording]);
+  }, [isRecording, isPaused, stopRecording, startRecording]);
 
   // Stop recording without restarting (for typing override)
   const handleStopRecording = useCallback(async () => {
