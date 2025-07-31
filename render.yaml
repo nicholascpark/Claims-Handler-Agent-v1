@@ -5,7 +5,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python backend.py
-    plan: starter
+    plan: free
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -23,12 +23,11 @@ services:
     healthCheckPath: /health
 
   # Frontend Static Site
-  - type: web
+  - type: static
     name: intactbot-frontend
-    env: static
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: frontend/build
-    plan: starter
+    plan: free
     envVars:
       - key: NODE_VERSION
         value: 18.17.0
