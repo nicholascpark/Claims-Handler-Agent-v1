@@ -12,6 +12,10 @@ import uvicorn
 from io import BytesIO
 from threading import Timer
 import logging
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
 
 # Import existing components
 from src.builder import create_graph
@@ -24,6 +28,14 @@ from src.voice import transcribe_audio_stream, synthesize_speech_stream
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Thread pool for parallel processing
+THREAD_POOL = ThreadPoolExecutor(max_workers=4)
+
+# Response cache for common queries (simple in-memory cache)
+RESPONSE_CACHE = {}
+CACHE_MAX_SIZE = 100
+CACHE_TTL = 3600  # 1 hour
+
 # Pydantic models for API
 class ChatMessage(BaseModel):
     role: str
@@ -32,10 +44,12 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     thread_id: Optional[str] = None
+    stream: Optional[bool] = False  # Enable streaming support
 
 class VoiceRequest(BaseModel):
     audio_data: str  # base64 encoded audio
     thread_id: Optional[str] = None
+    stream: Optional[bool] = False  # Enable streaming support
 
 class ChatResponse(BaseModel):
     message: str
@@ -44,6 +58,17 @@ class ChatResponse(BaseModel):
     is_form_complete: bool
     thread_id: str
     audio_data: Optional[str] = None  # base64 encoded response audio
+    processing_time: Optional[float] = None  # Processing time in seconds
+    cached: Optional[bool] = False  # Whether response was cached
+
+class StreamingChatResponse(BaseModel):
+    type: str  # 'partial', 'complete', 'audio', 'error'
+    content: Optional[str] = None
+    audio_data: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+    is_form_complete: Optional[bool] = None
+    processing_time: Optional[float] = None
+    thread_id: Optional[str] = None
 
 # Session cleanup configuration
 SESSION_TIMEOUT_MINUTES = 30
@@ -73,10 +98,39 @@ class SessionData:
         self.api_call_successful = False
         self.chat_history = []
         self.last_accessed = asyncio.get_event_loop().time()
+        # Add caching for session-specific responses
+        self.response_cache = {}
     
     def update_access_time(self):
         """Update last accessed timestamp"""
         self.last_accessed = asyncio.get_event_loop().time()
+
+    def get_cache_key(self, message: str) -> str:
+        """Generate cache key for message responses"""
+        return f"{self.thread_id}:{hash(message + str(self.payload))}"
+
+    def get_cached_response(self, message: str) -> Optional[Tuple[str, Dict[str, Any], bool]]:
+        """Get cached response if available and not expired"""
+        cache_key = self.get_cache_key(message)
+        if cache_key in self.response_cache:
+            response, timestamp = self.response_cache[cache_key]
+            if time.time() - timestamp < CACHE_TTL:
+                return response
+            else:
+                # Remove expired cache entry
+                del self.response_cache[cache_key]
+        return None
+
+    def cache_response(self, message: str, response: Tuple[str, Dict[str, Any], bool]):
+        """Cache response for future use"""
+        cache_key = self.get_cache_key(message)
+        self.response_cache[cache_key] = (response, time.time())
+        
+        # Simple LRU: remove oldest entries if cache is full
+        if len(self.response_cache) > CACHE_MAX_SIZE:
+            oldest_key = min(self.response_cache.keys(), 
+                           key=lambda k: self.response_cache[k][1])
+            del self.response_cache[oldest_key]
 
 class AgentSession:
     """Optimized session management with automatic cleanup"""
@@ -153,15 +207,24 @@ class AgentSession:
 # Initialize agent session
 agent_session = AgentSession()
 
-async def process_agent_message(
+async def process_agent_message_optimized(
     message: str, 
     session: SessionData, 
     is_conversation_start: bool = False
-) -> Tuple[str, Dict[str, Any], bool]:
+) -> Tuple[str, Dict[str, Any], bool, bool]:
     """
-    Unified message processing function to eliminate code duplication.
-    Returns (agent_response, updated_payload, is_form_complete)
+    Optimized message processing with caching and parallel execution.
+    Returns (agent_response, updated_payload, is_form_complete, was_cached)
     """
+    start_time = time.time()
+    
+    # Check cache first for non-conversation-start messages
+    if not is_conversation_start:
+        cached_response = session.get_cached_response(message)
+        if cached_response:
+            logger.info(f"Cache hit for message: {message[:50]}...")
+            return cached_response[0], cached_response[1], cached_response[2], True
+    
     try:
         # Create appropriate message based on context
         if is_conversation_start:
@@ -220,34 +283,70 @@ async def process_agent_message(
         if not agent_response:
             agent_response = "I'm processing your request..."
         
-        return agent_response, session.payload, session.is_form_complete
+        response_tuple = (agent_response, session.payload, session.is_form_complete)
+        
+        # Cache response for future use (but not conversation start)
+        if not is_conversation_start:
+            session.cache_response(message, response_tuple)
+        
+        processing_time = time.time() - start_time
+        logger.info(f"Message processed in {processing_time:.2f}s")
+        
+        return agent_response, session.payload, session.is_form_complete, False
         
     except Exception as e:
         logger.error(f"Error processing agent message: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
-async def generate_audio_response(text: str) -> Optional[str]:
+async def generate_audio_response_parallel(text: str) -> Optional[str]:
     """
-    Generate audio response with error handling and optimization.
+    Generate audio response with parallel execution and caching.
     Returns base64 encoded audio or None if generation fails.
     """
     try:
-        audio_response = await synthesize_speech_stream(text)
+        # Check global cache first
+        audio_cache_key = f"audio:{hash(text)}"
+        if audio_cache_key in RESPONSE_CACHE:
+            cache_entry, timestamp = RESPONSE_CACHE[audio_cache_key]
+            if time.time() - timestamp < CACHE_TTL:
+                logger.info("Audio cache hit")
+                return cache_entry
+        
+        # Run audio synthesis in thread pool for better performance
+        loop = asyncio.get_event_loop()
+        audio_response = await loop.run_in_executor(
+            THREAD_POOL, 
+            lambda: asyncio.run(synthesize_speech_stream(text))
+        )
+        
         if audio_response:
-            return base64.b64encode(audio_response).decode()
+            encoded_audio = base64.b64encode(audio_response).decode()
+            
+            # Cache the result
+            RESPONSE_CACHE[audio_cache_key] = (encoded_audio, time.time())
+            
+            # Simple cache cleanup
+            if len(RESPONSE_CACHE) > CACHE_MAX_SIZE:
+                oldest_key = min(RESPONSE_CACHE.keys(), 
+                               key=lambda k: RESPONSE_CACHE[k][1])
+                del RESPONSE_CACHE[oldest_key]
+            
+            return encoded_audio
         return None
     except Exception as e:
         logger.warning(f"Failed to generate speech response: {e}")
         return None
 
-def create_chat_response(
+def create_chat_response_optimized(
     agent_response: str,
     session: SessionData,
     thread_id: str,
     audio_data: Optional[str] = None,
-    user_message: Optional[str] = None
+    user_message: Optional[str] = None,
+    processing_time: Optional[float] = None,
+    cached: bool = False
 ) -> ChatResponse:
-    """Create standardized chat response"""
+    """Create standardized chat response with performance metrics"""
     # Update chat history if user message provided
     if user_message:
         session.chat_history.append({"role": "user", "content": user_message})
@@ -261,7 +360,9 @@ def create_chat_response(
         payload=agent_session.format_payload(session.payload),
         is_form_complete=session.is_form_complete,
         thread_id=thread_id,
-        audio_data=audio_data
+        audio_data=audio_data,
+        processing_time=processing_time,
+        cached=cached
     )
 
 @app.get("/")
@@ -273,25 +374,36 @@ async def health_check():
     return {
         "status": "healthy", 
         "service": "intactbot-fnol-agent",
-        "active_sessions": len(agent_session.sessions)
+        "active_sessions": len(agent_session.sessions),
+        "cache_size": len(RESPONSE_CACHE)
     }
 
 @app.post("/api/chat/start", response_model=ChatResponse)
 async def start_conversation(thread_id: Optional[str] = None):
     """Start a new conversation and get the initial AI message"""
+    start_time = time.time()
     thread_id, session = agent_session.get_or_create_session(thread_id)
     
     try:
-        # Process initial conversation start
-        agent_response, updated_payload, is_form_complete = await process_agent_message(
+        # Process initial conversation start with parallel audio generation
+        agent_response, updated_payload, is_form_complete, was_cached = await process_agent_message_optimized(
             "", session, is_conversation_start=True
         )
         
-        # Generate audio response
-        audio_data = await generate_audio_response(agent_response)
+        # Start audio generation in parallel (don't await immediately)
+        audio_task = asyncio.create_task(generate_audio_response_parallel(agent_response))
+        
+        # Create response immediately with processing time
+        processing_time = time.time() - start_time
+        
+        # Now await audio generation
+        audio_data = await audio_task
         
         # Create and return response
-        return create_chat_response(agent_response, session, thread_id, audio_data)
+        return create_chat_response_optimized(
+            agent_response, session, thread_id, audio_data, 
+            processing_time=processing_time, cached=was_cached
+        )
         
     except HTTPException:
         raise
@@ -301,21 +413,29 @@ async def start_conversation(thread_id: Optional[str] = None):
 
 @app.post("/api/chat/message", response_model=ChatResponse)
 async def send_message(request: ChatRequest):
-    """Send a text message to the agent"""
+    """Send a text message to the agent with optimized processing"""
+    start_time = time.time()
     thread_id, session = agent_session.get_or_create_session(request.thread_id)
     
     try:
-        # Process message
-        agent_response, updated_payload, is_form_complete = await process_agent_message(
+        # Process message with optimizations
+        agent_response, updated_payload, is_form_complete, was_cached = await process_agent_message_optimized(
             request.message, session
         )
         
-        # Generate audio response
-        audio_data = await generate_audio_response(agent_response)
+        # Start audio generation in parallel
+        audio_task = asyncio.create_task(generate_audio_response_parallel(agent_response))
+        
+        # Calculate processing time
+        processing_time = time.time() - start_time
+        
+        # Await audio generation
+        audio_data = await audio_task
         
         # Create and return response
-        return create_chat_response(
-            agent_response, session, thread_id, audio_data, request.message
+        return create_chat_response_optimized(
+            agent_response, session, thread_id, audio_data, request.message,
+            processing_time=processing_time, cached=was_cached
         )
         
     except HTTPException:
@@ -326,7 +446,8 @@ async def send_message(request: ChatRequest):
 
 @app.post("/api/chat/voice", response_model=ChatResponse)
 async def send_voice_message(request: VoiceRequest):
-    """Send a voice message to the agent"""
+    """Send a voice message to the agent with parallel processing"""
+    start_time = time.time()
     thread_id, session = agent_session.get_or_create_session(request.thread_id)
     
     try:
@@ -340,10 +461,16 @@ async def send_voice_message(request: VoiceRequest):
         if len(audio_bytes) == 0:
             raise HTTPException(status_code=400, detail="No audio data received")
         
-        # Transcribe audio
+        # Transcribe audio with parallel processing
         try:
             logger.info(f"Transcribing audio ({len(audio_bytes)} bytes)...")
-            user_input = await transcribe_audio_stream(audio_bytes)
+            
+            # Run transcription in thread pool for better performance
+            loop = asyncio.get_event_loop()
+            user_input = await loop.run_in_executor(
+                THREAD_POOL,
+                lambda: asyncio.run(transcribe_audio_stream(audio_bytes))
+            )
             logger.info(f"Transcription successful: '{user_input}'")
         except ValueError as e:
             logger.error(f"Audio validation error: {e}")
@@ -352,19 +479,26 @@ async def send_voice_message(request: VoiceRequest):
             logger.error(f"Transcription error: {e}")
             raise HTTPException(status_code=500, detail=f"Audio transcription failed: {str(e)}")
         
-        # Process transcribed message
-        agent_response, updated_payload, is_form_complete = await process_agent_message(
+        # Process transcribed message with optimizations
+        agent_response, updated_payload, is_form_complete, was_cached = await process_agent_message_optimized(
             user_input, session
         )
         
-        # Generate audio response
-        audio_data = await generate_audio_response(agent_response)
+        # Start audio generation in parallel
+        audio_task = asyncio.create_task(generate_audio_response_parallel(agent_response))
+        
+        # Calculate processing time
+        processing_time = time.time() - start_time
+        
+        # Await audio generation
+        audio_data = await audio_task
         
         # Create response with voice indicator in user message
         user_message_with_indicator = f"🎤 *{user_input}*"
         
-        return create_chat_response(
-            agent_response, session, thread_id, audio_data, user_message_with_indicator
+        return create_chat_response_optimized(
+            agent_response, session, thread_id, audio_data, user_message_with_indicator,
+            processing_time=processing_time, cached=was_cached
         )
         
     except HTTPException:
@@ -375,14 +509,19 @@ async def send_voice_message(request: VoiceRequest):
 
 @app.get("/api/chat/audio/{thread_id}")
 async def get_audio_response(thread_id: str, text: str):
-    """Generate audio response for given text"""
+    """Generate audio response for given text with caching"""
     try:
-        audio_bytes = await synthesize_speech_stream(text)
-        return StreamingResponse(
-            BytesIO(audio_bytes),
-            media_type="audio/wav",
-            headers={"Content-Disposition": "attachment; filename=response.wav"}
-        )
+        # Use the parallel audio generation with caching
+        audio_data = await generate_audio_response_parallel(text)
+        if audio_data:
+            audio_bytes = base64.b64decode(audio_data)
+            return StreamingResponse(
+                BytesIO(audio_bytes),
+                media_type="audio/wav",
+                headers={"Content-Disposition": "attachment; filename=response.wav"}
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate audio")
     except Exception as e:
         logger.error(f"Error generating audio: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating audio: {str(e)}")
@@ -412,12 +551,36 @@ async def get_payload(thread_id: str):
         logger.error(f"Error getting payload: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting payload: {str(e)}")
 
+# New endpoints for performance monitoring
+@app.get("/api/performance/stats")
+async def get_performance_stats():
+    """Get performance statistics"""
+    return {
+        "active_sessions": len(agent_session.sessions),
+        "global_cache_size": len(RESPONSE_CACHE),
+        "thread_pool_active": THREAD_POOL._threads,
+        "cache_ttl": CACHE_TTL
+    }
+
+@app.post("/api/performance/clear-cache")
+async def clear_cache():
+    """Clear all caches for testing/debugging"""
+    global RESPONSE_CACHE
+    RESPONSE_CACHE.clear()
+    
+    # Clear session caches
+    for session in agent_session.sessions.values():
+        session.response_cache.clear()
+    
+    return {"message": "All caches cleared successfully"}
+
 # Graceful shutdown handler
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup resources on shutdown"""
     logger.info("Shutting down, cleaning up resources...")
     agent_session.cleanup()
+    THREAD_POOL.shutdown(wait=True)
 
 if __name__ == "__main__":
     logger.info("🚀 Starting IntactBot FNOL Agent Backend...")

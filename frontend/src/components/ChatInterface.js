@@ -10,6 +10,13 @@ import MessagesList from './MessagesList';
 import TextInputArea from './TextInputArea';
 import useAudioRecording from '../hooks/useAudioRecording';
 import { getLoadingSound } from '../utils/loadingSound';
+import { 
+  playAudioImmediate, 
+  stopAllAudio, 
+  cacheAudio, 
+  getCachedAudio,
+  getAudioCacheStats 
+} from '../utils/audioOptimization';
 
 const MainContainer = styled.div`
   display: flex;
@@ -333,13 +340,16 @@ const ChatInterface = memo(({
     }
   }, [setCurrentAudioData, setIsPlayingLoadingSound, setAiAudioComplete]);
 
-  // Helper function to stop loading sound
-  const stopLoadingSound = useCallback(() => {
-    if (isPlayingLoadingSound) {
-      console.log('Stopping loading sound');
+  // Helper function to stop loading sound immediately
+  const stopLoadingSound = useCallback((immediate = false) => {
+    if (isPlayingLoadingSound || immediate) {
+      console.log('Stopping loading sound immediately');
       setIsPlayingLoadingSound(false);
       setCurrentAudioData(null);
-      // Don't set aiAudioComplete here - let the actual AI response audio handle this
+      // Force stop any currently playing audio if immediate termination is requested
+      if (immediate) {
+        stopAllAudio(); // Use optimized audio stopping function
+      }
     }
   }, [isPlayingLoadingSound, setIsPlayingLoadingSound, setCurrentAudioData]);
 
@@ -360,30 +370,69 @@ const ChatInterface = memo(({
     setConversationTurn('processing');
     setIsAutoRecordingPending(false);
 
-    // Start loading sound immediately
+    // Start loading sound immediately and track processing start time
+    const loadingStartTime = Date.now();
+    window.processingStartTime = loadingStartTime; // Global tracking for audio handler
     await startLoadingSound();
 
     try {
       const response = await onSendMessage(message);
       
-      // Stop loading sound and play AI response
-      stopLoadingSound();
+      // Calculate if processing completed early
+      const loadingDuration = Date.now() - loadingStartTime;
+      const completedEarly = response.completedEarly || 
+                           (response.processing_time && (response.processing_time * 1000) < (loadingDuration * 0.7));
+      
+      console.log(`Message processing - Early completion: ${completedEarly}, Server time: ${response.processing_time}s, Loading time: ${(loadingDuration/1000).toFixed(2)}s, Cached: ${response.cached}`);
+      
+      // Stop loading sound immediately if completed early, otherwise normal stop
+      stopLoadingSound(completedEarly);
       
       if (response.audio_data) {
-        setCurrentAudioData(response.audio_data);
-        setAiAudioComplete(false);
-        setConversationTurn('ai_speaking');
+        // Cache the audio response for potential future use
+        if (response.message) {
+          cacheAudio(response.message, response.audio_data);
+        }
+        
+        // If completed early, use immediate playback for zero delay
+        if (completedEarly) {
+          console.log('Using immediate audio playback for early completion');
+          setConversationTurn('ai_speaking');
+          setAiAudioComplete(false);
+          
+          // Play audio immediately without delay
+          playAudioImmediate(
+            response.audio_data,
+            () => handleAudioPlay(),
+            () => handleAudioEnd()
+          ).catch(error => {
+            console.error('Immediate audio playback failed:', error);
+            // Fallback to regular audio handling
+            setCurrentAudioData(response.audio_data);
+          });
+        } else {
+          setCurrentAudioData(response.audio_data);
+          setAiAudioComplete(false);
+          setConversationTurn('ai_speaking');
+        }
       } else {
         setCurrentAudioData(null);
         setAiAudioComplete(true);
       }
       
-      toast.success('Message sent successfully!');
+      // Show performance-aware success message
+      const successMessage = response.cached 
+        ? '⚡ Message sent (cached response)!' 
+        : completedEarly 
+          ? '🚀 Message sent (fast response)!' 
+          : 'Message sent successfully!';
+      toast.success(successMessage);
+      
     } catch (error) {
       console.error('Error sending text message:', error);
       
-      // Stop loading sound on error
-      stopLoadingSound();
+      // Stop loading sound on error with immediate termination
+      stopLoadingSound(true);
       setConversationTurn('user_turn');
       setCurrentAudioData(null);
       setAiAudioComplete(true);
@@ -396,19 +445,51 @@ const ChatInterface = memo(({
     setConversationTurn('processing');
     setIsAutoRecordingPending(false);
     
-    // Start loading sound immediately
+    // Start loading sound immediately and track processing start time
+    const loadingStartTime = Date.now();
+    window.processingStartTime = loadingStartTime; // Global tracking for audio handler
     await startLoadingSound();
     
     try {
       const response = await onSendVoiceMessage(audioData);
       
-      // Stop loading sound and play AI response
-      stopLoadingSound();
+      // Calculate if processing completed early
+      const loadingDuration = Date.now() - loadingStartTime;
+      const completedEarly = response.completedEarly || 
+                           (response.processing_time && (response.processing_time * 1000) < (loadingDuration * 0.7));
+      
+      console.log(`Voice processing - Early completion: ${completedEarly}, Server time: ${response.processing_time}s, Loading time: ${(loadingDuration/1000).toFixed(2)}s, Cached: ${response.cached}`);
+      
+      // Stop loading sound immediately if completed early, otherwise normal stop
+      stopLoadingSound(completedEarly);
       
       if (response.audio_data) {
-        setCurrentAudioData(response.audio_data);
-        setAiAudioComplete(false);
-        setConversationTurn('ai_speaking');
+        // Cache the audio response for potential future use
+        if (response.message) {
+          cacheAudio(response.message, response.audio_data);
+        }
+        
+        // If completed early, use immediate playback for zero delay
+        if (completedEarly) {
+          console.log('Using immediate audio playback for early voice completion');
+          setConversationTurn('ai_speaking');
+          setAiAudioComplete(false);
+          
+          // Play audio immediately without delay
+          playAudioImmediate(
+            response.audio_data,
+            () => handleAudioPlay(),
+            () => handleAudioEnd()
+          ).catch(error => {
+            console.error('Immediate audio playback failed:', error);
+            // Fallback to regular audio handling
+            setCurrentAudioData(response.audio_data);
+          });
+        } else {
+          setCurrentAudioData(response.audio_data);
+          setAiAudioComplete(false);
+          setConversationTurn('ai_speaking');
+        }
       }
       
       return response;
@@ -416,8 +497,8 @@ const ChatInterface = memo(({
       console.error('Error sending voice message:', error);
       toast.error(`Failed to send voice message: ${error.message}`);
       
-      // Stop loading sound on error
-      stopLoadingSound();
+      // Stop loading sound on error with immediate termination
+      stopLoadingSound(true);
       setCurrentAudioData(null);
       setAiAudioComplete(true);
       
@@ -567,17 +648,29 @@ const ChatInterface = memo(({
       setAiAudioComplete(true);
       setCurrentAudioData(null);
     } else if (isPlayingLoadingSound && conversationTurn === 'processing') {
-      // Loading sound completed - restart it if still processing
+      // Loading sound completed - check if we should restart or if processing completed
       setTimeout(() => {
         // Use current state to check if still processing
         setConversationTurn(currentTurn => {
           console.log('Checking if still processing, current turn:', currentTurn);
+          
+          // Only restart loading sound if we're still processing and haven't completed early
           if (currentTurn === 'processing') {
-            startLoadingSound();
+            // Check if enough time has passed for normal loading continuation
+            const now = Date.now();
+            const timeSinceProcessingStart = now - (window.processingStartTime || now);
+            
+            // If processing has been going for less than 2 seconds, continue loading sound
+            if (timeSinceProcessingStart < 2000) {
+              startLoadingSound();
+            } else {
+              // Processing is taking too long, might be an edge case - just continue normally
+              startLoadingSound();
+            }
           }
           return currentTurn; // Return unchanged
         });
-      }, 100); // 100ms delay between loading sound repetitions for seamless continuity
+      }, 50); // Reduced delay for more responsive loading sound management
     }
   }, [setAiAudioComplete, setCurrentAudioData, setConversationTurn, isPlayingLoadingSound, startLoadingSound, conversationTurn]);
 
@@ -670,6 +763,21 @@ const ChatInterface = memo(({
     runDiagnostics();
   }, [conversationTurn, isAutoRecordingPending]);
 
+  // Performance monitoring (optional debug display)
+  const [showPerformanceStats, setShowPerformanceStats] = useState(false);
+  const [performanceStats, setPerformanceStats] = useState({});
+  
+  useEffect(() => {
+    if (showPerformanceStats) {
+      const interval = setInterval(() => {
+        const audioStats = getAudioCacheStats();
+        setPerformanceStats(audioStats);
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [showPerformanceStats]);
+
   // Memoized voice controls props
   const voiceControlsProps = useMemo(() => ({
     isRecording,
@@ -724,10 +832,19 @@ const ChatInterface = memo(({
         <LeftPanel>
           <ChatHeader>
             <ChatTitle>💬 Conversation History</ChatTitle>
-            <ResetButton onClick={handleReset} disabled={isLoading}>
-              <FaTrash />
-              Clear Chat
-            </ResetButton>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <ResetButton onClick={handleReset} disabled={isLoading}>
+                <FaTrash />
+                Clear Chat
+              </ResetButton>
+              <ResetButton 
+                onClick={() => setShowPerformanceStats(!showPerformanceStats)}
+                style={{ fontSize: '12px', padding: '4px 8px' }}
+                title="Toggle performance statistics"
+              >
+                📊
+              </ResetButton>
+            </div>
           </ChatHeader>
 
           <ChatBody>
@@ -735,6 +852,22 @@ const ChatInterface = memo(({
               chatHistory={chatHistory} 
               conversationTurn={conversationTurn} 
             />
+            {showPerformanceStats && (
+              <div style={{
+                padding: '8px',
+                background: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '4px',
+                margin: '8px',
+                fontSize: '12px',
+                fontFamily: 'monospace'
+              }}>
+                <strong>🚀 Performance Stats:</strong><br/>
+                Audio Cache: {performanceStats.cacheSize || 0}/{performanceStats.maxCacheSize || 0} |
+                Audio Pool: {performanceStats.poolSize || 0} |
+                Active: {performanceStats.activeAudio || 0}
+              </div>
+            )}
             <TextInputArea {...textInputProps} />
           </ChatBody>
         </LeftPanel>

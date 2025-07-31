@@ -130,9 +130,19 @@ function App() {
       return;
     }
 
+    // Add user message to chat history immediately
+    const userMessage = {
+      role: 'user',
+      content: message,
+      timestamp: new Date().toISOString()
+    };
+    setChatHistory(prev => [...prev, userMessage]);
+
     try {
       const response = await chatApi.sendMessage(message, threadId);
       
+      // Update with the complete chat history from the server
+      // This will include the AI response and may have updated user message format
       setChatHistory(response.chat_history);
       setPayload(response.payload);
       setIsFormComplete(response.is_form_complete);
@@ -140,6 +150,10 @@ function App() {
       return response;
     } catch (error) {
       console.error('Failed to send message:', error);
+      
+      // Remove the optimistically added user message on error
+      setChatHistory(prev => prev.slice(0, -1));
+      
       toast.error(`Failed to send message: ${error.message}`);
       throw error;
     }
@@ -151,9 +165,21 @@ function App() {
       return;
     }
 
+    // Add user voice message to chat history immediately
+    const userMessage = {
+      role: 'user',
+      content: 'Processing Voice',
+      timestamp: new Date().toISOString(),
+      isVoiceMessage: true,
+      isProcessing: true
+    };
+    setChatHistory(prev => [...prev, userMessage]);
+
     try {
       const response = await chatApi.sendVoiceMessage(audioData, threadId);
       
+      // Update with the complete chat history from the server
+      // This will include the AI response and may have the transcribed text for the voice message
       setChatHistory(response.chat_history);
       setPayload(response.payload);
       setIsFormComplete(response.is_form_complete);
@@ -161,6 +187,10 @@ function App() {
       return response;
     } catch (error) {
       console.error('Failed to send voice message:', error);
+      
+      // Remove the optimistically added user message on error
+      setChatHistory(prev => prev.slice(0, -1));
+      
       toast.error(`Failed to send voice message: ${error.message}`);
       throw error;
     }

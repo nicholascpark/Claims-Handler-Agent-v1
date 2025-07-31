@@ -7,13 +7,25 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 seconds timeout
+  timeout: 15000, // Reduced to 15 seconds for faster error detection
+  // Connection optimization
+  maxRedirects: 3,
+  validateStatus: function (status) {
+    return status >= 200 && status < 300; // default
+  },
+  // Enable compression
+  decompress: true,
+  // Connection keep-alive
+  adapter: 'http',
+  maxContentLength: 50000000, // 50MB max response size
+  maxBodyLength: 50000000, // 50MB max request size
 });
 
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    // Add any auth headers or other processing here
+    // Add timestamp for request timing
+    config.metadata = { startTime: new Date() };
     return config;
   },
   (error) => {
@@ -21,9 +33,17 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor
+// Response interceptor with performance monitoring
 api.interceptors.response.use(
   (response) => {
+    // Calculate client-side request time
+    const requestTime = new Date() - response.config.metadata.startTime;
+    
+    // Log performance metrics if available
+    if (response.data?.processing_time) {
+      console.log(`Request completed - Server: ${response.data.processing_time.toFixed(2)}s, Client: ${(requestTime/1000).toFixed(2)}s, Cached: ${response.data.cached || false}`);
+    }
+    
     return response;
   },
   (error) => {
@@ -40,33 +60,59 @@ export const chatApi = {
   startConversation: async (threadId = null) => {
     try {
       const response = await api.post('/api/chat/start', { thread_id: threadId });
-      return response.data;
+      return {
+        ...response.data,
+        // Add client timing information
+        clientRequestTime: new Date() - response.config.metadata.startTime
+      };
     } catch (error) {
       throw new Error(`Failed to start conversation: ${error.response?.data?.detail || error.message}`);
     }
   },
 
-  // Send a text message
-  sendMessage: async (message, threadId) => {
+  // Send a text message with early completion detection
+  sendMessage: async (message, threadId, options = {}) => {
     try {
+      const startTime = Date.now();
+      
       const response = await api.post('/api/chat/message', {
         message,
         thread_id: threadId,
+        stream: options.enableStreaming || false,
       });
-      return response.data;
+      
+      const totalTime = Date.now() - startTime;
+      
+      return {
+        ...response.data,
+        clientRequestTime: totalTime,
+        // Flag for early completion handling
+        completedEarly: response.data.processing_time && (response.data.processing_time * 1000) < (totalTime * 0.8)
+      };
     } catch (error) {
       throw new Error(`Failed to send message: ${error.response?.data?.detail || error.message}`);
     }
   },
 
-  // Send a voice message
-  sendVoiceMessage: async (audioData, threadId) => {
+  // Send a voice message with early completion detection
+  sendVoiceMessage: async (audioData, threadId, options = {}) => {
     try {
+      const startTime = Date.now();
+      
       const response = await api.post('/api/chat/voice', {
         audio_data: audioData,
         thread_id: threadId,
+        stream: options.enableStreaming || false,
       });
-      return response.data;
+      
+      const totalTime = Date.now() - startTime;
+      
+      return {
+        ...response.data,
+        clientRequestTime: totalTime,
+        // Flag for early completion handling
+        completedEarly: response.data.processing_time && (response.data.processing_time * 1000) < (totalTime * 0.8)
+      };
     } catch (error) {
       throw new Error(`Failed to send voice message: ${error.response?.data?.detail || error.message}`);
     }
@@ -105,7 +151,7 @@ export const chatApi = {
     }
   },
 
-  // Health check
+  // Health check with performance stats
   healthCheck: async () => {
     try {
       const response = await api.get('/health');
@@ -114,6 +160,26 @@ export const chatApi = {
       throw new Error(`Health check failed: ${error.response?.data?.detail || error.message}`);
     }
   },
+
+  // New: Get performance statistics
+  getPerformanceStats: async () => {
+    try {
+      const response = await api.get('/api/performance/stats');
+      return response.data;
+    } catch (error) {
+      throw new Error(`Failed to get performance stats: ${error.response?.data?.detail || error.message}`);
+    }
+  },
+
+  // New: Clear caches for testing
+  clearCache: async () => {
+    try {
+      const response = await api.post('/api/performance/clear-cache');
+      return response.data;
+    } catch (error) {
+      throw new Error(`Failed to clear cache: ${error.response?.data?.detail || error.message}`);
+    }
+  }
 };
 
 export default api; 
