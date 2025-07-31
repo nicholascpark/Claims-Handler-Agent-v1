@@ -171,10 +171,8 @@ const ChatBody = styled.div`
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 500px;
-  max-height: 500px;
-  min-height: 400px;
-  border-bottom: 1px solid #e0e0e0;
+  min-height: 0;
+  overflow: hidden;
 `;
 
 // Custom hook for conversation state management
@@ -968,8 +966,8 @@ const ChatInterface = memo(({
                 Active: {performanceStats.activeAudio || 0}
               </div>
             )}
-            <TextInputArea {...textInputProps} />
           </ChatBody>
+          <TextInputArea {...textInputProps} />
         </LeftPanel>
 
         <PayloadWrapper $isChatVisible={isChatVisible}>
