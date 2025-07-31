@@ -154,8 +154,8 @@ const VisualizerContainer = styled.div`
   transition: all 0.3s ease;
   
   ${props => props.$show && css`
-    border-color: ${props.$isRecording ? '#dc3545' : props.$isAISpeaking ? '#6c94ff' : '#ffc107'};
-    background: ${props.$isRecording ? 'rgba(220, 53, 69, 0.05)' : props.$isAISpeaking ? 'rgba(108, 148, 255, 0.05)' : 'rgba(255, 193, 7, 0.05)'};
+    border-color: ${props.$isRecording ? '#dc3545' : props.$isAISpeaking ? '#888888' : '#ffc107'};
+    background: ${props.$isRecording ? 'rgba(220, 53, 69, 0.05)' : props.$isAISpeaking ? 'rgba(136, 136, 136, 0.05)' : 'rgba(255, 193, 7, 0.05)'};
   `}
 `;
 

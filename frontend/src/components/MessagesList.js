@@ -5,10 +5,34 @@ import ChatMessage from './ChatMessage';
 const MessagesContainer = styled.div`
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  max-height: 100%;
+  scroll-behavior: smooth;
+  
+  /* Custom scrollbar styling for better UX */
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+    transition: background 0.3s ease;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
 `;
 
 const NoMessagesPlaceholder = styled.div`
@@ -35,14 +59,27 @@ const PlaceholderText = styled.p`
 
 const MessagesList = memo(({ chatHistory = [], conversationTurn = 'waiting' }) => {
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive, but only if user is near bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (!container || !messagesEndRef.current) return;
+
+    // Check if user is near the bottom (within 100px)
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    
+    // Only auto-scroll if user is near bottom or if it's the first message
+    if (isNearBottom || chatHistory.length <= 1) {
+      messagesEndRef.current?.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'end'
+      });
+    }
   }, [chatHistory]);
 
   return (
-    <MessagesContainer>
+    <MessagesContainer ref={messagesContainerRef}>
       {chatHistory.length === 0 ? (
         <NoMessagesPlaceholder>
           <PlaceholderIcon>💬</PlaceholderIcon>

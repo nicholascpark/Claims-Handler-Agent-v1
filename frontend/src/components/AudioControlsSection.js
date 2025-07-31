@@ -10,6 +10,14 @@ const AudioControlsContainer = styled.div`
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   margin-bottom: 20px;
   overflow: hidden;
+  width: 60%;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+  
+  @media (max-width: 768px) {
+    width: 90%;
+  }
 `;
 
 const AutoRecordingNotification = styled.div`

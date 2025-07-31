@@ -27,8 +27,8 @@ const MainContainer = styled.div`
 
 const ChatContainer = styled.div`
   display: grid;
-  grid-template-columns: ${props => props.$isChatVisible ? '1fr 560px' : '560px'};
-  justify-content: ${props => props.$isChatVisible ? 'normal' : 'center'};
+  grid-template-columns: ${props => props.$isChatVisible ? '1fr 560px' : '800px'};
+  justify-content: center;
   gap: 24px;
   min-height: 60vh;
   transition: all 0.3s ease;
@@ -62,34 +62,62 @@ const ChatToggleContainer = styled.div`
 `;
 
 const ChatToggleButton = styled.button`
-  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
-  color: white;
-  border: none;
-  border-radius: 12px;
-  padding: 12px 24px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 50%, #dee2e6 100%);
+  color: #495057;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 16px;
+  padding: 14px 28px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
-  gap: 8px;
-  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+  gap: 10px;
+  box-shadow: 
+    0 2px 8px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+    transition: left 0.6s ease;
+  }
 
   &:hover {
-    background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+    background: linear-gradient(135deg, #ffffff 0%, #f1f3f4 50%, #e9ecef 100%);
+    transform: translateY(-2px);
+    box-shadow: 
+      0 8px 25px rgba(0, 0, 0, 0.12),
+      0 4px 8px rgba(0, 0, 0, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    border-color: rgba(255, 255, 255, 1);
+
+    &::before {
+      left: 100%;
+    }
   }
 
   &:active {
-    transform: translateY(0);
+    transform: translateY(-1px);
+    box-shadow: 
+      0 4px 12px rgba(0, 0, 0, 0.1),
+      0 2px 4px rgba(0, 0, 0, 0.05),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
   }
 `;
 
 const PayloadWrapper = styled.div`
-  width: ${props => props.$isChatVisible ? '560px' : '100%'};
-  max-width: ${props => props.$isChatVisible ? '560px' : '1200px'};
+  width: ${props => props.$isChatVisible ? '560px' : '800px'};
+  max-width: ${props => props.$isChatVisible ? '560px' : '800px'};
   transition: all 0.3s ease;
   
   @media (max-width: 1200px) {
@@ -144,6 +172,9 @@ const ChatBody = styled.div`
   display: flex;
   flex-direction: column;
   height: 500px;
+  max-height: 500px;
+  min-height: 400px;
+  border-bottom: 1px solid #e0e0e0;
 `;
 
 // Custom hook for conversation state management

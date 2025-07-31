@@ -166,15 +166,15 @@ const FrequencyVisualizer = memo(({
              // Create gradient based on state
        const gradient = ctx.createLinearGradient(0, rect.height - height, 0, rect.height);
        
-       if (isAISpeaking) {
-         // Cool blue-purple gradient for AI speaking with gentle pulsing
-         const intensity = level;
-         const pulse = Math.sin(timeRef.current * 3) * 0.2 + 0.8;
-         const hueShift = Math.sin(timeRef.current * 2 + i * 0.3) * 30; // Color variation across bars
-         gradient.addColorStop(0, `rgba(${Math.max(80, 120 - intensity * 100) * pulse}, ${Math.max(100, 180 - intensity * 80) * pulse}, ${Math.max(200, 255 - intensity * 55) * pulse}, 1)`);
-         gradient.addColorStop(0.5, `rgba(${80 + hueShift}, ${120 + hueShift * 0.5}, ${200}, 0.8)`);
-         gradient.addColorStop(1, `rgba(${60 * pulse}, ${90 * pulse}, ${180 * pulse}, 1)`);
-               } else if (isRecording) {
+             if (isAISpeaking) {
+        // Cool gray gradient for AI speaking with gentle pulsing
+        const intensity = level;
+        const pulse = Math.sin(timeRef.current * 3) * 0.2 + 0.8;
+        const hueShift = Math.sin(timeRef.current * 2 + i * 0.3) * 20; // Color variation across bars
+        gradient.addColorStop(0, `rgba(${Math.max(120, 160 - intensity * 40) * pulse}, ${Math.max(120, 160 - intensity * 40) * pulse}, ${Math.max(120, 160 - intensity * 40) * pulse}, 1)`);
+        gradient.addColorStop(0.5, `rgba(${100 + hueShift}, ${100 + hueShift}, ${100 + hueShift}, 0.8)`);
+        gradient.addColorStop(1, `rgba(${80 * pulse}, ${80 * pulse}, ${80 * pulse}, 1)`);
+              } else if (isRecording) {
           // Dynamic red gradient for recording with very gentle pulsing
           const intensity = level;
           const pulse = Math.sin(timeRef.current * 1.5) * 0.15 + 0.85;
@@ -200,9 +200,9 @@ const FrequencyVisualizer = memo(({
              // Add glow effect for active states
        if (isAISpeaking || isRecording || isPaused) {
          ctx.shadowBlur = isAISpeaking ? 12 : 8;
-         if (isAISpeaking) {
-           ctx.shadowColor = 'rgba(100, 150, 255, 0.7)';
-           ctx.fillStyle = 'rgba(120, 180, 255, 0.2)';
+                 if (isAISpeaking) {
+          ctx.shadowColor = 'rgba(120, 120, 120, 0.7)';
+          ctx.fillStyle = 'rgba(140, 140, 140, 0.2)';
          } else if (isRecording) {
            ctx.shadowColor = 'rgba(255, 80, 80, 0.6)';
            ctx.fillStyle = 'rgba(255, 80, 80, 0.3)';
@@ -217,7 +217,7 @@ const FrequencyVisualizer = memo(({
              // Add subtle highlight line at the top
        const highlightThreshold = hasAudio ? 5 : 2;
        if (height > highlightThreshold) {
-         ctx.strokeStyle = isAISpeaking ? 'rgba(200, 220, 255, 0.6)' : 'rgba(255, 255, 255, 0.5)';
+         ctx.strokeStyle = isAISpeaking ? 'rgba(180, 180, 180, 0.6)' : 'rgba(255, 255, 255, 0.5)';
          ctx.lineWidth = 0.5;
          ctx.beginPath();
          ctx.moveTo(x + 1, rect.height - height);
@@ -248,7 +248,7 @@ const FrequencyVisualizer = memo(({
          const alpha = (Math.sin(timeRef.current * 1.5 + i * 0.5) * 0.4 + 0.3);
          const size = 1.5 + Math.sin(timeRef.current * 3 + i * 0.8) * 1;
          
-         ctx.fillStyle = `rgba(150, 200, 255, ${alpha})`;
+         ctx.fillStyle = `rgba(140, 140, 140, ${alpha})`;
          ctx.beginPath();
          ctx.arc(x, y, size, 0, Math.PI * 2);
          ctx.fill();

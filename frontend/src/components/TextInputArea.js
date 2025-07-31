@@ -163,7 +163,7 @@ const TextInputArea = memo(({
   // Memoize placeholder text calculation
   const placeholderText = useMemo(() => {
     if (conversationTurn === 'ai_speaking' || conversationTurn === 'processing') {
-      return "Please wait while AI responds...";
+      return "Please wait while AI speaks...";
     }
     if (isRecording && !isPaused && !textMessage.trim()) {
       return "Recording in progress - start typing to switch to text mode...";

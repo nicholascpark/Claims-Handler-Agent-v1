@@ -11,11 +11,11 @@ const PayloadContainer = styled.div`
   overflow: hidden;
   height: fit-content;
   max-height: 140vh;
-  width: 125%;
+  width: 100%;
   
   @media (max-width: 1200px) {
     max-height: 700px;
-    width: 125%;
+    width: 100%;
   }
 `;
 
@@ -118,13 +118,13 @@ const CodeBlock = styled.pre`
   padding: 16px;
   background: #1e1e1e;
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.4;
   color: #d4d4d4;
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-x: auto;
-  max-height: 625px;
+  max-height: 700px;
   overflow-y: auto;
 
   /* JSON Syntax Highlighting */
