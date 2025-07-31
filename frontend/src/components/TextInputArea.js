@@ -36,6 +36,35 @@ const TextInputContainer = styled.div`
   background: #f8f9fa;
 `;
 
+const QueueIndicator = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #007bff;
+  font-weight: 600;
+  background: rgba(0, 123, 255, 0.1);
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 123, 255, 0.3);
+  margin-bottom: 12px;
+  animation: pulse 2s infinite;
+  
+  @keyframes pulse {
+    0% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.7);
+    }
+    50% {
+      transform: scale(1.02);
+      box-shadow: 0 0 0 10px rgba(0, 123, 255, 0);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+    }
+  }
+`;
+
 const TextInputRow = styled.div`
   display: flex;
   gap: 12px;
@@ -149,10 +178,11 @@ const TextInputArea = memo(({
   isRecording,
   isPaused,
   isLoading,
-  isTextSending,
+  isProcessingQueue,
   isProcessing,
   conversationTurn,
   isAutoRecordingPending,
+  messageQueueLength = 0,
   onTextChange,
   onSendMessage,
   onKeyPress,
@@ -162,26 +192,31 @@ const TextInputArea = memo(({
 }) => {
   // Memoize placeholder text calculation
   const placeholderText = useMemo(() => {
+    if (isProcessingQueue && messageQueueLength > 0) {
+      return `🔄 Processing ${messageQueueLength} queued message(s)...`;
+    }
+    if (messageQueueLength > 0) {
+      return `📝 ${messageQueueLength} message(s) queued - processing together...`;
+    }
     if (conversationTurn === 'ai_speaking' || conversationTurn === 'processing') {
-      return "Please wait while AI speaks...";
+      return "⚡ Type your message while AI is responding (will interrupt and batch)...";
     }
     if (isRecording && !isPaused && !textMessage.trim()) {
-      return "Recording in progress - start typing to switch to text mode...";
+      return "🎤 Recording in progress - start typing...";
     }
     if (isPaused && !textMessage.trim()) {
-      return "Recording paused - start typing to switch to text mode...";
+      return "⏸️ Recording paused - start typing to switch to text mode...";
     }
     if (conversationTurn === 'user_turn' || conversationTurn === 'user_speaking') {
       return "💡 Your turn - Type here or use Record button to start voice recording...";
     }
     return "💡 Type your message here to start the conversation...";
-  }, [isRecording, isPaused, textMessage, conversationTurn]);
+  }, [isRecording, isPaused, textMessage, conversationTurn, messageQueueLength, isProcessingQueue]);
 
-  // Memoize input disabled state
+  // Input is now always enabled to allow continuous typing
   const isInputDisabled = useMemo(() => {
-    return isLoading || isTextSending || 
-           conversationTurn === 'ai_speaking' || conversationTurn === 'processing';
-  }, [isLoading, isTextSending, conversationTurn]);
+    return false; // Keep input always enabled
+  }, []);
 
   // Handle text change and stop recording if user starts typing
   const handleTextChange = useCallback((e) => {
@@ -195,25 +230,26 @@ const TextInputArea = memo(({
     }
   }, [onTextChange, isRecording, isPaused, textMessage.length, onStopRecording]);
 
-  // Memoize send button disabled state - updated to work with typing override
+  // Allow sending messages at any time when there's content
   const isSendDisabled = useMemo(() => {
-    return (!textMessage.trim() && !isRecording && !isPaused) || 
-           isLoading || isTextSending || isProcessing || 
-           (conversationTurn === 'ai_speaking' && !isRecording && !isPaused && !textMessage.trim());
-  }, [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn]);
+    return (!textMessage.trim() && !isRecording && !isPaused);
+  }, [textMessage, isRecording, isPaused]);
 
   // Determine if we should show recording-specific UI or normal text input UI
   const showRecordingUI = useMemo(() => {
     return (isRecording || isPaused) && !textMessage.trim();
   }, [isRecording, isPaused, textMessage]);
 
-  // Memoize send button text - updated for typing override
+  // Memoize send button text - updated for queue support
   const sendButtonText = useMemo(() => {
     if (showRecordingUI) {
       return isProcessing ? 'Sending...' : 'Send Recording';
     }
-    return isTextSending ? 'Sending...' : 'Send';
-  }, [showRecordingUI, isProcessing, isTextSending]);
+    if (isProcessingQueue) {
+      return messageQueueLength > 0 ? 'Adding to Queue...' : 'Processing...';
+    }
+    return messageQueueLength > 0 ? `Send (${messageQueueLength + 1})` : 'Send';
+  }, [showRecordingUI, isProcessing, isProcessingQueue, messageQueueLength]);
 
   // Memoize toggle button text
   const toggleButtonText = useMemo(() => {
@@ -235,6 +271,17 @@ const TextInputArea = memo(({
         </RecordingIndicator>
       )}
       
+      {/* Queue indicator - only show when messages are being queued or processed */}
+      {(isProcessingQueue || messageQueueLength > 0) && (
+        <QueueIndicator>
+          <FaMicrophone />
+          {isProcessingQueue 
+            ? `🔄 Processing ${messageQueueLength} queued message(s)...` 
+            : `📝 ${messageQueueLength} message(s) queued - processing together...`
+          }
+        </QueueIndicator>
+      )}
+
       <TextInputRow>
         <TextInput
           value={textMessage}

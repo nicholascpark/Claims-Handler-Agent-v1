@@ -46,6 +46,11 @@ class ChatRequest(BaseModel):
     thread_id: Optional[str] = None
     stream: Optional[bool] = False  # Enable streaming support
 
+class QueuedChatRequest(BaseModel):
+    messages: List[str]  # Array of messages for queue processing
+    thread_id: Optional[str] = None
+    stream: Optional[bool] = False
+
 class VoiceRequest(BaseModel):
     audio_data: str  # base64 encoded audio
     thread_id: Optional[str] = None
@@ -207,6 +212,101 @@ class AgentSession:
 # Initialize agent session
 agent_session = AgentSession()
 
+async def process_queued_messages_optimized(
+    messages: List[str], 
+    session: SessionData
+) -> Tuple[str, Dict[str, Any], bool, bool]:
+    """
+    Process multiple queued messages and generate a single contextual response.
+    Returns (agent_response, updated_payload, is_form_complete, was_cached)
+    """
+    start_time = time.time()
+    
+    if not messages:
+        raise ValueError("No messages provided for processing")
+    
+    # Create cache key for the entire message sequence
+    combined_message = " | ".join(messages)
+    cache_key = f"queue:{session.get_cache_key(combined_message)}"
+    
+    # Check cache for the entire sequence
+    cached_response = session.get_cached_response(combined_message)
+    if cached_response:
+        logger.info(f"Cache hit for queued messages: {len(messages)} messages")
+        return cached_response[0], cached_response[1], cached_response[2], True
+    
+    try:
+        # Create a contextual message that combines all queued messages
+        if len(messages) == 1:
+            contextual_message = messages[0]
+        else:
+            contextual_message = f"I have {len(messages)} messages to address:\n"
+            for i, msg in enumerate(messages, 1):
+                contextual_message += f"{i}. {msg}\n"
+            contextual_message += "\nPlease provide a comprehensive response that addresses all of these points."
+        
+        # Process through the standard agent pipeline
+        initial_message = HumanMessage(content=contextual_message)
+        
+        # Create state for processing
+        initial_state: ConvoState = {
+            "messages": [initial_message],
+            "payload": session.payload,
+            "is_form_complete": session.is_form_complete,
+            "process_complete": session.process_complete,
+            "api_retry_count": session.api_retry_count,
+            "api_call_successful": session.api_call_successful,
+        }
+        
+        # Process through graph
+        events = agent_session.graph.astream(
+            initial_state, 
+            session.config, 
+            stream_mode="values"
+        )
+        
+        agent_response = ""
+        final_event = None
+        
+        async for event in events:
+            final_event = event
+            if "messages" in event and event["messages"]:
+                last_message = event["messages"][-1]
+                if hasattr(last_message, 'content') and last_message.content.strip():
+                    agent_response = last_message.content
+        
+        # Update session with final state
+        if final_event:
+            if "payload" in final_event and final_event["payload"]:
+                session.payload = final_event["payload"]
+            
+            if "is_form_complete" in final_event:
+                session.is_form_complete = final_event["is_form_complete"]
+            
+            if "process_complete" in final_event:
+                session.process_complete = final_event["process_complete"]
+            
+            if "api_call_successful" in final_event:
+                session.api_call_successful = final_event["api_call_successful"]
+        
+        # Fallback for empty responses
+        if not agent_response:
+            agent_response = f"I've reviewed all {len(messages)} of your messages and I'm processing your requests..."
+        
+        response_tuple = (agent_response, session.payload, session.is_form_complete)
+        
+        # Cache response for future use
+        session.cache_response(combined_message, response_tuple)
+        
+        processing_time = time.time() - start_time
+        logger.info(f"Queued messages processed in {processing_time:.2f}s")
+        
+        return agent_response, session.payload, session.is_form_complete, False
+        
+    except Exception as e:
+        logger.error(f"Error processing queued messages: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing messages: {str(e)}")
+
 async def process_agent_message_optimized(
     message: str, 
     session: SessionData, 
@@ -343,12 +443,18 @@ def create_chat_response_optimized(
     thread_id: str,
     audio_data: Optional[str] = None,
     user_message: Optional[str] = None,
+    user_messages: Optional[List[str]] = None,
     processing_time: Optional[float] = None,
     cached: bool = False
 ) -> ChatResponse:
     """Create standardized chat response with performance metrics"""
-    # Update chat history if user message provided
-    if user_message:
+    # Update chat history with user message(s)
+    if user_messages:
+        # Add multiple user messages as separate entries
+        for message in user_messages:
+            session.chat_history.append({"role": "user", "content": message})
+    elif user_message:
+        # Add single user message
         session.chat_history.append({"role": "user", "content": user_message})
     
     # Add agent response to history
@@ -443,6 +549,42 @@ async def send_message(request: ChatRequest):
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
+@app.post("/api/chat/queue", response_model=ChatResponse)
+async def send_queued_messages(request: QueuedChatRequest):
+    """Process multiple queued messages and generate a single contextual response"""
+    start_time = time.time()
+    thread_id, session = agent_session.get_or_create_session(request.thread_id)
+    
+    try:
+        logger.info(f"Processing {len(request.messages)} queued messages for thread {thread_id}")
+        
+        # Process queued messages with optimizations
+        agent_response, updated_payload, is_form_complete, was_cached = await process_queued_messages_optimized(
+            request.messages, session
+        )
+        
+        # Start audio generation in parallel
+        audio_task = asyncio.create_task(generate_audio_response_parallel(agent_response))
+        
+        # Calculate processing time
+        processing_time = time.time() - start_time
+        
+        # Await audio generation
+        audio_data = await audio_task
+        
+        # Create and return response with individual user messages
+        return create_chat_response_optimized(
+            agent_response, session, thread_id, audio_data, 
+            user_messages=request.messages,
+            processing_time=processing_time, cached=was_cached
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing queued messages: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing queued messages: {str(e)}")
 
 @app.post("/api/chat/voice", response_model=ChatResponse)
 async def send_voice_message(request: VoiceRequest):

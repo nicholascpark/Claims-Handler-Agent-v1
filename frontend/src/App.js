@@ -124,35 +124,66 @@ function App() {
     }
   }, [isBackendHealthy]);
 
-  const handleSendMessage = useCallback(async (message) => {
+  const handleSendMessage = useCallback(async (messageOrMessages, abortSignal) => {
     if (!threadId) {
       toast.error('No active conversation. Please restart the application.');
       return;
     }
 
-    // Add user message to chat history immediately
-    const userMessage = {
-      role: 'user',
-      content: message,
-      timestamp: new Date().toISOString()
-    };
-    setChatHistory(prev => [...prev, userMessage]);
+    // Handle both single messages and arrays of messages
+    const isMultipleMessages = Array.isArray(messageOrMessages);
+    
+    // Only add optimistic updates for single messages
+    // Multiple messages are handled optimistically by ChatInterface
+    if (!isMultipleMessages) {
+      const userMessage = {
+        role: 'user',
+        content: messageOrMessages,
+        timestamp: new Date().toISOString()
+      };
+      setChatHistory(prev => [...prev, userMessage]);
+    }
 
     try {
-      const response = await chatApi.sendMessage(message, threadId);
+      const response = await chatApi.sendMessage(messageOrMessages, threadId, abortSignal);
       
-      // Update with the complete chat history from the server
-      // This will include the AI response and may have updated user message format
-      setChatHistory(response.chat_history);
-      setPayload(response.payload);
-      setIsFormComplete(response.is_form_complete);
+      // Only update state if the request wasn't aborted
+      if (!abortSignal?.aborted) {
+        // For queued messages, we only add the AI response since user messages are already shown
+        if (isMultipleMessages) {
+          // Add only the AI response to the existing chat history
+          setChatHistory(prev => [...prev, {
+            role: 'assistant',
+            content: response.message,
+            timestamp: new Date().toISOString()
+          }]);
+        } else {
+          // For single messages, update with complete chat history from server
+          setChatHistory(response.chat_history);
+        }
+        setPayload(response.payload);
+        setIsFormComplete(response.is_form_complete);
+      }
       
       return response;
     } catch (error) {
+      if (error.name === 'AbortError' || abortSignal?.aborted) {
+        console.log('Message sending was aborted - cleaning up optimistic updates');
+        // Remove optimistically added messages on abort
+        // Only single messages have optimistic updates from App.js
+        if (!isMultipleMessages) {
+          setChatHistory(prev => prev.slice(0, -1));
+        }
+        throw error; // Re-throw abort error so calling code can handle it
+      }
+      
       console.error('Failed to send message:', error);
       
-      // Remove the optimistically added user message on error
-      setChatHistory(prev => prev.slice(0, -1));
+      // Remove the optimistically added user message(s) on error
+      // Only single messages have optimistic updates from App.js
+      if (!isMultipleMessages) {
+        setChatHistory(prev => prev.slice(0, -1));
+      }
       
       toast.error(`Failed to send message: ${error.message}`);
       throw error;
@@ -246,6 +277,7 @@ function App() {
     onSendMessage: handleSendMessage,
     onSendVoiceMessage: handleSendVoiceMessage,
     onReset: handleResetConversation,
+    onUpdateChatHistory: setChatHistory,
     isLoading,
     initialAudio
   }), [
@@ -255,6 +287,7 @@ function App() {
     handleSendMessage,
     handleSendVoiceMessage,
     handleResetConversation,
+    setChatHistory,
     isLoading,
     initialAudio
   ]);

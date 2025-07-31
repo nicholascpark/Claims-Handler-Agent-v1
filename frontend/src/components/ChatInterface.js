@@ -30,7 +30,8 @@ const ChatContainer = styled.div`
   grid-template-columns: ${props => props.$isChatVisible ? '1fr 560px' : '800px'};
   justify-content: center;
   gap: 24px;
-  min-height: 60vh;
+  height: 60vh;
+  min-height: 500px;
   transition: all 0.3s ease;
   
   @media (max-width: 1200px) {
@@ -49,6 +50,7 @@ const LeftPanel = styled.div`
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   overflow: hidden;
   transition: all 0.3s ease;
+  height: 100%;
   
   @media (max-width: 1200px) {
     display: ${props => props.$isVisible ? 'flex' : 'none'};
@@ -187,6 +189,13 @@ const useConversationState = (initialAudio) => {
   const [currentAudioData, setCurrentAudioData] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPlayingLoadingSound, setIsPlayingLoadingSound] = useState(false);
+  
+  // Message queue state management
+  const [messageQueue, setMessageQueue] = useState([]);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+  const [processingQueueCount, setProcessingQueueCount] = useState(0);
+  const [shouldInterruptProcessing, setShouldInterruptProcessing] = useState(false);
+  const [currentAbortController, setCurrentAbortController] = useState(null);
 
   const turnTimeoutRef = useRef(null);
 
@@ -230,7 +239,17 @@ const useConversationState = (initialAudio) => {
     setIsProcessing,
     isPlayingLoadingSound,
     setIsPlayingLoadingSound,
-    turnTimeoutRef
+    turnTimeoutRef,
+    messageQueue,
+    setMessageQueue,
+    isProcessingQueue,
+    setIsProcessingQueue,
+    processingQueueCount,
+    setProcessingQueueCount,
+    shouldInterruptProcessing,
+    setShouldInterruptProcessing,
+    currentAbortController,
+    setCurrentAbortController
   };
 };
 
@@ -241,11 +260,11 @@ const ChatInterface = memo(({
   onSendMessage,
   onSendVoiceMessage,
   onReset,
+  onUpdateChatHistory,
   isLoading = false,
   initialAudio
 }) => {
   const [textMessage, setTextMessage] = useState('');
-  const [isTextSending, setIsTextSending] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false); // Default to hidden as requested
 
   // Use custom hook for conversation state
@@ -271,7 +290,17 @@ const ChatInterface = memo(({
     setIsProcessing,
     isPlayingLoadingSound,
     setIsPlayingLoadingSound,
-    turnTimeoutRef
+    turnTimeoutRef,
+    messageQueue,
+    setMessageQueue,
+    isProcessingQueue,
+    setIsProcessingQueue,
+    processingQueueCount,
+    setProcessingQueueCount,
+    shouldInterruptProcessing,
+    setShouldInterruptProcessing,
+    currentAbortController,
+    setCurrentAbortController
   } = conversationState;
 
   // Audio recording hook
@@ -389,23 +418,6 @@ const ChatInterface = memo(({
     };
   }, [conversationTurn, aiTextDisplayed, currentAudioData, setAiAudioComplete, setCurrentAudioData]);
 
-  // Handle user turn when conditions change
-  useEffect(() => {
-    console.log('Auto-recording effect triggered:', {
-      conversationTurn,
-      isInitialized,
-      isRecording,
-      isPaused,
-      isProcessing,
-      isAutoRecordingPending
-    });
-    
-    if (conversationTurn === 'user_turn' && isInitialized && !isRecording && !isPaused && !isProcessing && isAutoRecordingPending) {
-      console.log('Conditions met - starting auto-recording');
-      startAutoRecording();
-    }
-  }, [conversationTurn, isInitialized, isRecording, isPaused, isProcessing, isAutoRecordingPending, startAutoRecording]);
-
   // Helper function to start loading sound
   const startLoadingSound = useCallback(async () => {
     try {
@@ -434,95 +446,231 @@ const ChatInterface = memo(({
     }
   }, [isPlayingLoadingSound, setIsPlayingLoadingSound, setCurrentAudioData]);
 
-  // Memoized handlers to prevent unnecessary re-renders
-  const handleSendMessage = useCallback(async (messageText = null) => {
-    const message = messageText || textMessage.trim();
-    if (!message && !isRecording && !isPaused) return;
+  // Audio handlers for playback control
+  const handleAudioPlay = useCallback(() => {
+    console.log('AI audio started playing');
+    setAudioPlayStartTime(Date.now());
+  }, [setAudioPlayStartTime]);
 
-    // If we're currently recording, stop and send the voice message
-    if (isRecording || isPaused) {
-      return await handleStopAndSend();
+  const handleAudioEnd = useCallback(() => {
+    console.log('AI audio finished playing');
+    console.log('isPlayingLoadingSound:', isPlayingLoadingSound);
+    console.log('conversationTurn:', conversationTurn);
+    
+    // If we're in ai_speaking state, this should be the AI response audio finishing
+    if (conversationTurn === 'ai_speaking' || !isPlayingLoadingSound) {
+      // AI response audio completed - clear it and mark as complete
+      console.log('Marking AI audio as complete');
+      setAiAudioComplete(true);
+      setCurrentAudioData(null);
+    } else if (isPlayingLoadingSound && conversationTurn === 'processing') {
+      // Loading sound completed - check if we should restart or if processing completed
+      setTimeout(() => {
+        // Use current state to check if still processing
+        setConversationTurn(currentTurn => {
+          console.log('Checking if still processing, current turn:', currentTurn);
+          
+          // Only restart loading sound if we're still processing and haven't completed early
+          if (currentTurn === 'processing') {
+            // Check if enough time has passed for normal loading continuation
+            const now = Date.now();
+            const timeSinceProcessingStart = now - (window.processingStartTime || now);
+            
+            // If processing has been going for less than 2 seconds, continue loading sound
+            if (timeSinceProcessingStart < 2000) {
+              startLoadingSound();
+            } else {
+              // Processing is taking too long, might be an edge case - just continue normally
+              startLoadingSound();
+            }
+          }
+          return currentTurn; // Return unchanged
+        });
+      }, 50); // Reduced delay for more responsive loading sound management
+    }
+  }, [setAiAudioComplete, setCurrentAudioData, setConversationTurn, isPlayingLoadingSound, startLoadingSound, conversationTurn]);
+
+  // Interrupt current processing with proper cleanup and immediate queue processing
+  const interruptProcessing = useCallback(async () => {
+    if (currentAbortController) {
+      console.log('Interrupting current message processing for batching');
+      setShouldInterruptProcessing(true);
+      currentAbortController.abort();
+      stopLoadingSound(true);
+      
+      // Wait a brief moment for cleanup to complete
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // Reset processing states
+      setIsProcessing(false);
+      setIsProcessingQueue(false);
+      setProcessingQueueCount(0);
+      setConversationTurn('user_turn');
+      
+      console.log('Interruption complete - ready for immediate queue processing');
+    }
+  }, [currentAbortController, setShouldInterruptProcessing, stopLoadingSound, setIsProcessing, setIsProcessingQueue, setProcessingQueueCount, setConversationTurn]);
+
+  // Message queue processing logic with proper gating
+  const processMessageQueue = useCallback(async () => {
+    // Enhanced gating to prevent concurrent processing
+    if (isProcessingQueue || isProcessing || messageQueue.length === 0) {
+      console.log('Skipping queue processing - already processing or no messages:', {
+        isProcessingQueue,
+        isProcessing,
+        queueLength: messageQueue.length
+      });
+      return;
     }
 
-    if (!message) return;
+    console.log('Starting queue processing for', messageQueue.length, 'messages');
+    setIsProcessingQueue(true);
+    setIsProcessing(true);
+    setShouldInterruptProcessing(false);
     
-    setTextMessage('');
-    setIsTextSending(true);
-    setConversationTurn('processing');
-    setIsAutoRecordingPending(false);
-
-    // Start loading sound immediately and track processing start time
-    const loadingStartTime = Date.now();
-    window.processingStartTime = loadingStartTime; // Global tracking for audio handler
-    await startLoadingSound();
-
     try {
-      const response = await onSendMessage(message);
+      // Get all queued messages and track count for UI
+      const messages = [...messageQueue];
+      setProcessingQueueCount(messages.length); // Store count for UI display
+      setMessageQueue([]); // Clear queue
       
-      // Calculate if processing completed early
-      const loadingDuration = Date.now() - loadingStartTime;
-      const completedEarly = response.completedEarly || 
-                           (response.processing_time && (response.processing_time * 1000) < (loadingDuration * 0.7));
+      console.log(`Processing ${messages.length} queued messages:`, messages);
       
-      console.log(`Message processing - Early completion: ${completedEarly}, Server time: ${response.processing_time}s, Loading time: ${(loadingDuration/1000).toFixed(2)}s, Cached: ${response.cached}`);
-      
-      // Stop loading sound immediately if completed early, otherwise normal stop
-      stopLoadingSound(completedEarly);
-      
-      if (response.audio_data) {
-        // Cache the audio response for potential future use
-        if (response.message) {
-          cacheAudio(response.message, response.audio_data);
+      setConversationTurn('processing');
+      setIsAutoRecordingPending(false);
+
+      // Start loading sound immediately and track processing start time
+      const loadingStartTime = Date.now();
+      window.processingStartTime = loadingStartTime;
+      await startLoadingSound();
+
+      // Create abort controller for interruption
+      const abortController = new AbortController();
+      setCurrentAbortController(abortController);
+
+      try {
+        // Send queued messages to backend for processing
+        const response = await onSendMessage(messages, abortController.signal);
+        
+        // Check if processing was interrupted
+        if (shouldInterruptProcessing || abortController.signal.aborted) {
+          console.log('Message processing was interrupted');
+          stopLoadingSound(true);
+          return;
         }
         
-        // If completed early, use immediate playback for zero delay
-        if (completedEarly) {
-          console.log('Using immediate audio playback for early completion');
-          setConversationTurn('ai_speaking');
-          setAiAudioComplete(false);
+        // Calculate if processing completed early
+        const loadingDuration = Date.now() - loadingStartTime;
+        const completedEarly = response.completedEarly || 
+                             (response.processing_time && (response.processing_time * 1000) < (loadingDuration * 0.7));
+        
+        console.log(`Queue processing - Early completion: ${completedEarly}, Server time: ${response.processing_time}s, Loading time: ${(loadingDuration/1000).toFixed(2)}s, Cached: ${response.cached}`);
+        
+        // Stop loading sound immediately if completed early, otherwise normal stop
+        stopLoadingSound(completedEarly);
+        
+        if (response.audio_data) {
+          // Cache the audio response for potential future use
+          if (response.message) {
+            cacheAudio(response.message, response.audio_data);
+          }
           
-          // Play audio immediately without delay
-          playAudioImmediate(
-            response.audio_data,
-            () => handleAudioPlay(),
-            () => handleAudioEnd()
-          ).catch(error => {
-            console.error('Immediate audio playback failed:', error);
-            // Fallback to regular audio handling
+          // If completed early, use immediate playback for zero delay
+          if (completedEarly) {
+            console.log('Using immediate audio playback for early completion');
+            setConversationTurn('ai_speaking');
+            setAiAudioComplete(false);
+            
+            // Play audio immediately without delay
+            playAudioImmediate(
+              response.audio_data,
+              () => handleAudioPlay(),
+              () => handleAudioEnd()
+            ).catch(error => {
+              console.error('Immediate audio playback failed:', error);
+              // Fallback to regular audio handling
+              setCurrentAudioData(response.audio_data);
+            });
+          } else {
             setCurrentAudioData(response.audio_data);
-          });
+            setAiAudioComplete(false);
+            setConversationTurn('ai_speaking');
+          }
         } else {
-          setCurrentAudioData(response.audio_data);
-          setAiAudioComplete(false);
-          setConversationTurn('ai_speaking');
+          setCurrentAudioData(null);
+          setAiAudioComplete(true);
         }
-      } else {
+        
+        // Show performance-aware success message
+        const successMessage = response.cached 
+          ? '⚡ Messages processed (cached response)!' 
+          : completedEarly 
+            ? `🚀 ${messages.length} messages processed (fast response)!` 
+            : `${messages.length} messages processed successfully!`;
+        toast.success(successMessage);
+        
+      } catch (error) {
+        if (error.name === 'AbortError' || shouldInterruptProcessing || abortController.signal.aborted) {
+          console.log('Message processing was interrupted by user - cleaning up gracefully');
+          stopLoadingSound(true);
+          setConversationTurn('user_turn');
+          setCurrentAudioData(null);
+          setAiAudioComplete(true);
+          return; // Don't show error toast for intentional interruptions
+        }
+        
+        console.error('Error processing message queue:', error);
+        
+        // Stop loading sound on error with immediate termination
+        stopLoadingSound(true);
+        setConversationTurn('user_turn');
         setCurrentAudioData(null);
         setAiAudioComplete(true);
+        toast.error(`Failed to process messages: ${error.message}`);
       }
-      
-      // Show performance-aware success message
-      const successMessage = response.cached 
-        ? '⚡ Message sent (cached response)!' 
-        : completedEarly 
-          ? '🚀 Message sent (fast response)!' 
-          : 'Message sent successfully!';
-      toast.success(successMessage);
-      
-    } catch (error) {
-      console.error('Error sending text message:', error);
-      
-      // Stop loading sound on error with immediate termination
-      stopLoadingSound(true);
-      setConversationTurn('user_turn');
-      setCurrentAudioData(null);
-      setAiAudioComplete(true);
     } finally {
-      setIsTextSending(false);
+      setIsProcessingQueue(false);
+      setIsProcessing(false);
+      setProcessingQueueCount(0); // Clear processing count
+      setCurrentAbortController(null);
+      setShouldInterruptProcessing(false);
+      console.log('Queue processing completed and states cleaned up');
     }
-  }, [textMessage, isRecording, isPaused, onSendMessage, setConversationTurn, setIsAutoRecordingPending, setCurrentAudioData, setAiAudioComplete, startLoadingSound, stopLoadingSound]);
+  }, [
+    isProcessingQueue,
+    isProcessing,
+    messageQueue, 
+    setMessageQueue, 
+    onSendMessage, 
+    setConversationTurn, 
+    setIsAutoRecordingPending, 
+    setCurrentAudioData, 
+    setAiAudioComplete, 
+    startLoadingSound, 
+    stopLoadingSound, 
+    shouldInterruptProcessing, 
+    setIsProcessingQueue,
+    setIsProcessing,
+    setProcessingQueueCount,
+    setShouldInterruptProcessing, 
+    setCurrentAbortController,
+    handleAudioPlay,
+    handleAudioEnd
+  ]);
 
+  // Voice message handler
   const handleSendVoiceMessageLocal = useCallback(async (audioData) => {
+    // Clear any pending message queue and interrupt processing for voice message
+    if (messageQueue.length > 0) {
+      console.log('Clearing message queue for voice message');
+      setMessageQueue([]);
+    }
+    
+    if (isProcessingQueue || isProcessing) {
+      console.log('Interrupting current processing for voice message');
+      await interruptProcessing();
+    }
+    
     setConversationTurn('processing');
     setIsAutoRecordingPending(false);
     
@@ -591,8 +739,44 @@ const ChatInterface = memo(({
     } finally {
       setIsProcessing(false);
     }
-  }, [onSendVoiceMessage, setConversationTurn, setIsAutoRecordingPending, setCurrentAudioData, setAiAudioComplete, setIsProcessing, startLoadingSound, stopLoadingSound]);
+  }, [onSendVoiceMessage, setConversationTurn, setIsAutoRecordingPending, setCurrentAudioData, setAiAudioComplete, setIsProcessing, startLoadingSound, stopLoadingSound, isProcessingQueue, isProcessing, interruptProcessing, handleAudioPlay, handleAudioEnd, messageQueue.length, setMessageQueue]);
 
+  // Process message queue with proper batching for rapid successive inputs
+  useEffect(() => {
+    if (messageQueue.length > 0 && !isProcessingQueue && !isProcessing) {
+      console.log(`Queue updated: ${messageQueue.length} messages - implementing smart batching`);
+      
+      // Always use a batching window to catch rapid successive inputs
+      // This ensures messages sent within 750ms are batched together
+      const batchTimeout = setTimeout(() => {
+        if (messageQueue.length > 0 && !isProcessingQueue && !isProcessing) {
+          console.log(`Processing batch of ${messageQueue.length} messages`);
+          processMessageQueue();
+        }
+      }, 750); // 750ms batching window for rapid inputs - generous for human typing patterns
+      
+      return () => clearTimeout(batchTimeout);
+    }
+  }, [messageQueue.length, isProcessingQueue, isProcessing, processMessageQueue]);
+
+  // Handle user turn when conditions change
+  useEffect(() => {
+    console.log('Auto-recording effect triggered:', {
+      conversationTurn,
+      isInitialized,
+      isRecording,
+      isPaused,
+      isProcessing,
+      isAutoRecordingPending
+    });
+    
+    if (conversationTurn === 'user_turn' && isInitialized && !isRecording && !isPaused && !isProcessing && isAutoRecordingPending) {
+      console.log('Conditions met - starting auto-recording');
+      startAutoRecording();
+    }
+  }, [conversationTurn, isInitialized, isRecording, isPaused, isProcessing, isAutoRecordingPending, startAutoRecording]);
+
+  // Stop and send recording handler
   const handleStopAndSend = useCallback(async () => {
     if (!isRecording && !isPaused) {
       toast.warning('No recording to send.');
@@ -627,6 +811,47 @@ const ChatInterface = memo(({
       setIsProcessing(false);
     }
   }, [isRecording, isPaused, stopRecording, getBase64Audio, handleSendVoiceMessageLocal, setIsProcessing, setCurrentAudioData, setAiAudioComplete, setConversationTurn]);
+
+  // Enhanced sendMessage handler with immediate UI feedback
+  const handleSendMessage = useCallback(async (messageText = null) => {
+    const message = messageText || textMessage.trim();
+    
+    // If we're currently recording, stop and send the voice message
+    if (!message && (isRecording || isPaused)) {
+      return await handleStopAndSend();
+    }
+    
+    if (!message) return;
+    
+    setTextMessage('');
+
+    // Immediately add user message to chat history for instant UI feedback
+    const userMessage = {
+      role: 'user',
+      content: message,
+      timestamp: new Date().toISOString(),
+      isOptimistic: true // Flag to identify optimistic updates
+    };
+    
+    // Update chat history immediately
+    onUpdateChatHistory(prev => [...prev, userMessage]);
+
+    // Add to queue for batch processing
+    setMessageQueue(prev => {
+      const newQueue = [...prev, message];
+      console.log(`Added message to queue: ${newQueue.length} total messages:`, newQueue);
+      return newQueue;
+    });
+    
+    // If currently processing, interrupt to batch all messages
+    if (isProcessingQueue || isProcessing) {
+      console.log('Currently processing - interrupting to batch all messages');
+      await interruptProcessing();
+    }
+    
+  }, [textMessage, isRecording, isPaused, handleStopAndSend, setMessageQueue, isProcessingQueue, isProcessing, interruptProcessing, onUpdateChatHistory]);
+
+
 
   const handleToggleRecording = useCallback(async () => {
     try {
@@ -684,7 +909,12 @@ const ChatInterface = memo(({
       setConversationTurn('user_turn');
       setIsAutoRecordingPending(false);
     }
-  }, [textMessage.length, isRecording, isPaused, setConversationTurn, setIsAutoRecordingPending]);
+    
+    // If user starts typing while queue is processing, allow interruption
+    if ((isProcessingQueue || isProcessing) && newValue.length > oldLength && newValue.trim()) {
+      console.log('User typing while processing queue - preparing for interruption');
+    }
+  }, [textMessage.length, isRecording, isPaused, isProcessingQueue, isProcessing, setConversationTurn, setIsAutoRecordingPending]);
 
   const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -699,7 +929,8 @@ const ChatInterface = memo(({
         clearTimeout(turnTimeoutRef.current);
         turnTimeoutRef.current = null;
       }
-      
+ 
+
       setConversationTurn('waiting');
       setAiTextDisplayed(false);
       setAiAudioComplete(false);
@@ -708,52 +939,13 @@ const ChatInterface = memo(({
       setCurrentAudioData(null);
       setLastAIMessage(null);
       setIsPlayingLoadingSound(false);
+      setMessageQueue([]);
+      setIsProcessingQueue(false);
+      setProcessingQueueCount(0);
+      setIsProcessing(false);
       await onReset();
     }
-  }, [onReset, setConversationTurn, setAiTextDisplayed, setAiAudioComplete, setTurnTransitionDelay, setIsAutoRecordingPending, setCurrentAudioData, setLastAIMessage, setIsPlayingLoadingSound]);
-
-  const handleAudioPlay = useCallback(() => {
-    console.log('AI audio started playing');
-    setAudioPlayStartTime(Date.now());
-  }, [setAudioPlayStartTime]);
-
-  const handleAudioEnd = useCallback(() => {
-    console.log('AI audio finished playing');
-    console.log('isPlayingLoadingSound:', isPlayingLoadingSound);
-    console.log('conversationTurn:', conversationTurn);
-    
-    // If we're in ai_speaking state, this should be the AI response audio finishing
-    if (conversationTurn === 'ai_speaking' || !isPlayingLoadingSound) {
-      // AI response audio completed - clear it and mark as complete
-      console.log('Marking AI audio as complete');
-      setAiAudioComplete(true);
-      setCurrentAudioData(null);
-    } else if (isPlayingLoadingSound && conversationTurn === 'processing') {
-      // Loading sound completed - check if we should restart or if processing completed
-      setTimeout(() => {
-        // Use current state to check if still processing
-        setConversationTurn(currentTurn => {
-          console.log('Checking if still processing, current turn:', currentTurn);
-          
-          // Only restart loading sound if we're still processing and haven't completed early
-          if (currentTurn === 'processing') {
-            // Check if enough time has passed for normal loading continuation
-            const now = Date.now();
-            const timeSinceProcessingStart = now - (window.processingStartTime || now);
-            
-            // If processing has been going for less than 2 seconds, continue loading sound
-            if (timeSinceProcessingStart < 2000) {
-              startLoadingSound();
-            } else {
-              // Processing is taking too long, might be an edge case - just continue normally
-              startLoadingSound();
-            }
-          }
-          return currentTurn; // Return unchanged
-        });
-      }, 50); // Reduced delay for more responsive loading sound management
-    }
-  }, [setAiAudioComplete, setCurrentAudioData, setConversationTurn, isPlayingLoadingSound, startLoadingSound, conversationTurn]);
+  }, [onReset, setConversationTurn, setAiTextDisplayed, setAiAudioComplete, setTurnTransitionDelay, setIsAutoRecordingPending, setCurrentAudioData, setLastAIMessage, setIsPlayingLoadingSound, setMessageQueue, setIsProcessingQueue, setProcessingQueueCount, setIsProcessing]);
 
   const handleDeviceChange = useCallback(async (e) => {
     const deviceId = e.target.value;
@@ -887,17 +1079,18 @@ const ChatInterface = memo(({
     isRecording,
     isPaused,
     isLoading,
-    isTextSending,
+    isProcessingQueue,
     isProcessing,
     conversationTurn,
     isAutoRecordingPending,
+    messageQueueLength: isProcessingQueue ? processingQueueCount : messageQueue.length,
     onTextChange: handleTextChange,
     onSendMessage: () => handleSendMessage(),
     onKeyPress: handleKeyPress,
     onToggleRecording: handleToggleRecording,
     onStartOver: handleStartOver,
     onStopRecording: handleStopRecording
-  }), [textMessage, isRecording, isPaused, isLoading, isTextSending, isProcessing, conversationTurn, isAutoRecordingPending, handleTextChange, handleSendMessage, handleKeyPress, handleToggleRecording, handleStartOver, handleStopRecording]);
+  }), [textMessage, isRecording, isPaused, isLoading, isProcessingQueue, isProcessing, conversationTurn, isAutoRecordingPending, messageQueue.length, processingQueueCount, handleTextChange, handleSendMessage, handleKeyPress, handleToggleRecording, handleStartOver, handleStopRecording]);
 
   // Toggle chat visibility
   const toggleChatVisibility = useCallback(() => {

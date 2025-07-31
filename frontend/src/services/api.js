@@ -99,16 +99,33 @@ export const chatApi = {
     }
   },
 
-  // Send a text message with early completion detection
-  sendMessage: async (message, threadId, options = {}) => {
+  // Send a text message with early completion detection (supports both single messages and arrays)
+  sendMessage: async (messageOrMessages, threadId, abortSignal, options = {}) => {
     try {
       const startTime = Date.now();
       
-      const response = await api.post('/api/chat/message', {
-        message,
-        thread_id: threadId,
-        stream: options.enableStreaming || false,
-      });
+      let response;
+      
+      // Check if we're sending multiple messages (array) or single message
+      if (Array.isArray(messageOrMessages)) {
+        // Use the queue endpoint for multiple messages
+        response = await api.post('/api/chat/queue', {
+          messages: messageOrMessages,
+          thread_id: threadId,
+          stream: options.enableStreaming || false,
+        }, {
+          signal: abortSignal
+        });
+      } else {
+        // Use the standard endpoint for single messages
+        response = await api.post('/api/chat/message', {
+          message: messageOrMessages,
+          thread_id: threadId,
+          stream: options.enableStreaming || false,
+        }, {
+          signal: abortSignal
+        });
+      }
       
       const totalTime = Date.now() - startTime;
       
@@ -119,6 +136,9 @@ export const chatApi = {
         completedEarly: response.data.processing_time && (response.data.processing_time * 1000) < (totalTime * 0.8)
       };
     } catch (error) {
+      if (error.name === 'AbortError') {
+        throw error; // Re-throw abort errors as-is
+      }
       throw new Error(`Failed to send message: ${error.response?.data?.detail || error.message}`);
     }
   },

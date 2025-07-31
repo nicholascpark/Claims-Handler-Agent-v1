@@ -10,7 +10,7 @@ const MessagesContainer = styled.div`
   flex-direction: column;
   gap: 16px;
   min-height: 0;
-  max-height: 100%;
+  height: 100%;
 `;
 
 const NoMessagesPlaceholder = styled.div`
@@ -18,7 +18,7 @@ const NoMessagesPlaceholder = styled.div`
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  flex: 1;
   color: #999;
   text-align: center;
   gap: 16px;
