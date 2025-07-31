@@ -15,6 +15,12 @@ soundfile
 numpy
 scipy
 
+# Date/time handling
+pytz
+
+# HTTP requests
+requests
+
 # FastAPI backend dependencies
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
