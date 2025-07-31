@@ -5,6 +5,11 @@ langchain-openai
 langchain-core
 pydantic
 python-dotenv
+trustcall
+pytz
+pgeocode
+pandas
+requests
 
 # Database and state management
 langchain-community
@@ -14,12 +19,6 @@ SQLAlchemy
 soundfile
 numpy
 scipy
-
-# Date/time handling
-pytz
-
-# HTTP requests
-requests
 
 # FastAPI backend dependencies
 fastapi>=0.104.0
