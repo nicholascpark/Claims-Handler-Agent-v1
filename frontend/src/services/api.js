@@ -13,12 +13,11 @@ const api = axios.create({
   validateStatus: function (status) {
     return status >= 200 && status < 300; // default
   },
-  // Enable compression
+  // Enable compression for better performance
   decompress: true,
-  // Connection keep-alive
-  adapter: 'http',
   maxContentLength: 50000000, // 50MB max response size
   maxBodyLength: 50000000, // 50MB max request size
+  // Remove adapter specification to use browser default (xhr)
 });
 
 // Request interceptor
@@ -26,9 +25,11 @@ api.interceptors.request.use(
   (config) => {
     // Add timestamp for request timing
     config.metadata = { startTime: new Date() };
+    console.log('Making API request to:', config.baseURL + config.url);
     return config;
   },
   (error) => {
+    console.error('Request interceptor error:', error);
     return Promise.reject(error);
   }
 );
@@ -47,13 +48,41 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    // Enhanced error logging for debugging
+    console.error('API Error Details:', {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url,
+      baseURL: error.config?.baseURL,
+      timeout: error.config?.timeout
+    });
+    
     // Handle common errors
     if (error.response?.status === 500) {
       console.error('Server error:', error.response.data);
+    } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+      console.error('Network connection error - backend may be unavailable');
     }
+    
     return Promise.reject(error);
   }
 );
+
+// Debug function to test backend connectivity
+window.testBackendConnection = async () => {
+  console.log('Testing backend connection...');
+  try {
+    const response = await fetch('http://localhost:8000/health');
+    const data = await response.json();
+    console.log('✅ Backend connection successful:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ Backend connection failed:', error);
+    throw error;
+  }
+};
 
 export const chatApi = {
   // Start a new conversation
@@ -154,9 +183,18 @@ export const chatApi = {
   // Health check with performance stats
   healthCheck: async () => {
     try {
+      console.log('Attempting health check to:', API_BASE_URL + '/health');
       const response = await api.get('/health');
+      console.log('Health check successful:', response.data);
       return response.data;
     } catch (error) {
+      console.error('Health check error details:', {
+        message: error.message,
+        code: error.code,
+        response: error.response?.data,
+        status: error.response?.status,
+        url: error.config?.url
+      });
       throw new Error(`Health check failed: ${error.response?.data?.detail || error.message}`);
     }
   },
