@@ -6,10 +6,6 @@ langchain-core
 pydantic
 python-dotenv
 trustcall
-pytz
-pgeocode
-pandas
-requests
 
 # Database and state management
 langchain-community

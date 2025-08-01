@@ -200,11 +200,15 @@ export const chatApi = {
     }
   },
 
-  // Health check with performance stats
-  healthCheck: async () => {
+  // Health check with performance stats and cold start handling
+  healthCheck: async (isRetry = false) => {
     try {
       console.log('Attempting health check to:', API_BASE_URL + '/health');
-      const response = await api.get('/health');
+      
+      // Longer timeout for cold starts on Render free tier
+      const timeout = isRetry ? 90000 : 15000; // 90s for retry, 15s for normal
+      
+      const response = await api.get('/health', { timeout });
       console.log('Health check successful:', response.data);
       return response.data;
     } catch (error) {
@@ -213,8 +217,17 @@ export const chatApi = {
         code: error.code,
         response: error.response?.data,
         status: error.response?.status,
-        url: error.config?.url
+        url: error.config?.url,
+        isRetry
       });
+      
+      // Provide helpful error messages for different scenarios
+      if (error.code === 'ECONNABORTED' && isRetry) {
+        throw new Error('Backend is starting up (this can take up to 90 seconds on free tier). Please wait...');
+      } else if (error.code === 'ERR_NETWORK' || error.code === 'ECONNREFUSED') {
+        throw new Error('Backend service is sleeping. Click "Retry Connection" to wake it up.');
+      }
+      
       throw new Error(`Health check failed: ${error.response?.data?.detail || error.message}`);
     }
   },

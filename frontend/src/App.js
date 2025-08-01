@@ -74,7 +74,7 @@ function App() {
   const [isBackendHealthy, setIsBackendHealthy] = useState(null);
   const [initialAudio, setInitialAudio] = useState(null);
 
-  // Memoized backend health check function
+  // Memoized backend health check function with smart error handling
   const checkBackendHealth = useCallback(async () => {
     try {
       await chatApi.healthCheck();
@@ -82,8 +82,16 @@ function App() {
       setBackendError(null);
     } catch (error) {
       setIsBackendHealthy(false);
-      setBackendError('Backend service is not available. Please ensure the backend server is running.');
       console.error('Backend health check failed:', error);
+      
+      // Provide specific error messages based on error type
+      if (error.message.includes('ERR_NETWORK') || error.message.includes('ECONNREFUSED')) {
+        setBackendError('Backend service is sleeping (free tier). Click "Retry Connection" to wake it up.');
+      } else if (error.message.includes('timeout')) {
+        setBackendError('Backend service is slow to respond (possibly starting up). Please try "Retry Connection".');
+      } else {
+        setBackendError('Backend service is not available. Please ensure the backend server is running.');
+      }
     }
   }, []);
 
@@ -253,13 +261,27 @@ function App() {
 
   const retryBackendConnection = useCallback(async () => {
     try {
-      await chatApi.healthCheck();
+      setBackendError(null);
+      setIsLoading(true);
+      
+      // Show helpful message about cold start
+      toast.info('Waking up backend service... This may take up to 90 seconds on free tier.', {
+        autoClose: false,
+        toastId: 'waking-up'
+      });
+      
+      await chatApi.healthCheck(true); // Pass true for retry mode (longer timeout)
+      
       setIsBackendHealthy(true);
       setBackendError(null);
-      toast.success('Backend connection restored!');
+      toast.dismiss('waking-up');
+      toast.success('Backend connection restored! 🚀');
     } catch (error) {
-      setBackendError('Backend service is still not available. Please ensure the backend server is running.');
-      toast.error('Failed to connect to backend service.');
+      toast.dismiss('waking-up');
+      setBackendError(`Backend wake-up failed: ${error.message}`);
+      toast.error('Failed to wake up backend service. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -299,8 +321,11 @@ function App() {
       {backendError && (
         <ErrorBanner>
           ⚠️ {backendError}
-          <button onClick={retryBackendConnection}>
-            Retry Connection
+          <div style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
+            💡 <strong>Free Tier Note:</strong> Backend services sleep after 15 minutes of inactivity and take 30-90 seconds to wake up.
+          </div>
+          <button onClick={retryBackendConnection} disabled={isLoading}>
+            {isLoading ? 'Waking Up...' : 'Retry Connection'}
           </button>
         </ErrorBanner>
       )}
