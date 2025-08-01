@@ -837,6 +837,16 @@ const ChatInterface = memo(({
 
   const handleToggleRecording = useCallback(async () => {
     try {
+      // If AI is currently speaking, stop the audio output (works for both currentAudioData and playAudioImmediate)
+      if (conversationTurn === 'ai_speaking') {
+        console.log('Recording button clicked while AI is speaking - terminating AI audio');
+        stopAllAudio(); // Stop all audio playback immediately
+        setCurrentAudioData(null); // Clear current audio data
+        setAiAudioComplete(true); // Mark AI audio as complete
+        setConversationTurn('user_turn'); // Transition to user turn
+        toast.info('🤐 AI audio stopped - your turn to speak!');
+      }
+      
       // If we have text content and are starting recording, clear the text
       if (!isRecording && !isPaused && textMessage.trim()) {
         setTextMessage('');
@@ -850,7 +860,7 @@ const ChatInterface = memo(({
     } catch (error) {
       toast.error(`Recording error: ${error.message}`);
     }
-  }, [isRecording, isPaused, textMessage, currentAudioData, toggleRecording, setCurrentAudioData, setAiAudioComplete]);
+  }, [isRecording, isPaused, textMessage, currentAudioData, conversationTurn, toggleRecording, setCurrentAudioData, setAiAudioComplete, setConversationTurn]);
 
   // Restart recording from scratch
   const handleStartOver = useCallback(async () => {
