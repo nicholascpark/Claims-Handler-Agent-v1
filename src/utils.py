@@ -43,11 +43,11 @@ def create_tool_node_with_fallback(tools: list) -> dict:
 
 def create_llm(azure_compatible=False, test_connection=False):
     """
-    Factory function to create an AzureChatOpenAI instance with caching for performance.
-
-    This function creates an Azure OpenAI client using hardcoded endpoint/deployment 
-    values and an API key from the environment. It uses a singleton pattern to cache
-    instances and avoid expensive recreations.
+    Factory function to create an LLM instance with caching for performance.
+    
+    This function tries to create an Azure OpenAI client first, and falls back to 
+    regular OpenAI if Azure is not available or configured. It uses a singleton 
+    pattern to cache instances and avoid expensive recreations.
     
     Args:
         azure_compatible (bool): If True, returns an AzureOpenAIWrapper that handles
@@ -57,51 +57,75 @@ def create_llm(azure_compatible=False, test_connection=False):
                               Defaults to False for better performance.
     
     Returns:
-        AzureChatOpenAI or AzureOpenAIWrapper: The LLM instance, optionally wrapped.
+        AzureChatOpenAI, ChatOpenAI, or AzureOpenAIWrapper: The LLM instance, optionally wrapped.
     """
     # Create cache key based on configuration
     cache_key = f"azure_compatible_{azure_compatible}"
     
     # Return cached instance if available
     if cache_key in _llm_cache:
-        print(">> Using cached Azure OpenAI client...")
+        print(">> Using cached LLM client...")
         return _llm_cache[cache_key]
     
-    print(">> Creating new Azure OpenAI client...")
-    try:
-        api_key = os.environ["AZURE_OPENAI_API_KEY"]
-    except KeyError:
-        raise ValueError("FATAL: AZURE_OPENAI_API_KEY environment variable not set.") from None
-
-    # Create the LLM instance
-    llm = AzureChatOpenAI(
-        azure_endpoint="https://maeaioai01.openai.azure.com",
-        api_key=api_key,
-        azure_deployment="gpt-4o-quick",
-        api_version="2025-01-01-preview",
-        temperature=settings.TEMPERATURE,
-        max_tokens=settings.MAX_TOKENS,
-        max_retries=settings.MAX_RETRIES,
-    )
+    # Try Azure OpenAI first
+    if settings.AZURE_OPENAI_API_KEY:
+        print(">> Creating new Azure OpenAI client...")
+        try:
+            # Create the Azure LLM instance using environment variables
+            llm = AzureChatOpenAI(
+                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+                api_key=settings.AZURE_OPENAI_API_KEY,
+                azure_deployment=settings.AZURE_DEPLOYMENT_NAME,
+                api_version=settings.AZURE_OPENAI_API_VERSION,
+                temperature=settings.TEMPERATURE,
+                max_tokens=settings.MAX_TOKENS,
+                max_retries=settings.MAX_RETRIES,
+            )
+            print(">> Azure OpenAI client created successfully")
+        except Exception as e:
+            print(f">> Azure OpenAI failed: {e}")
+            print(">> Falling back to regular OpenAI...")
+            llm = None
+    else:
+        print(">> No Azure OpenAI API key found, using regular OpenAI...")
+        llm = None
+    
+    # Fallback to regular OpenAI
+    if llm is None:
+        if not settings.OPENAI_API_KEY:
+            raise ValueError("FATAL: Neither AZURE_OPENAI_API_KEY nor OPENAI_API_KEY is set.") from None
+        
+        llm = ChatOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            model=settings.MODEL_NAME,
+            temperature=settings.TEMPERATURE,
+            max_tokens=settings.MAX_TOKENS,
+            max_retries=settings.MAX_RETRIES,
+        )
+        print(">> Regular OpenAI client created successfully")
     
     # Optional connection test (disabled by default for performance)
     if test_connection:
         print("----------------------------------------------------------------")
         print("Testing the llm...")
         print("----------------------------------------------------------------")
-        print(llm.invoke("Tell me a joke."))
-        print("----------------------------------------------------------------")
-        print("-----LLM tested SUCCESSFULLY-----")
-        print("----------------------------------------------------------------")
+        try:
+            print(llm.invoke("Tell me a joke."))
+            print("----------------------------------------------------------------")
+            print("-----LLM tested SUCCESSFULLY-----")
+            print("----------------------------------------------------------------")
+        except Exception as e:
+            print(f"LLM test failed: {e}")
+            print("----------------------------------------------------------------")
     
-    # Wrap if azure_compatible is True
-    if azure_compatible:
+    # Wrap if azure_compatible is True (only for Azure OpenAI)
+    if azure_compatible and isinstance(llm, AzureChatOpenAI):
         print(">> Wrapping LLM for Azure OpenAI compatibility (tool_choice fixes)")
         llm = AzureOpenAIWrapper(llm)
     
     # Cache the instance
     _llm_cache[cache_key] = llm
-    print(">> Azure OpenAI client created and cached successfully")
+    print(">> LLM client created and cached successfully")
     
     return llm
 

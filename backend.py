@@ -82,6 +82,18 @@ CLEANUP_INTERVAL_MINUTES = 10
 # FastAPI app
 app = FastAPI(title="IntactBot FNOL Agent API", version="1.0.0")
 
+# Temporary endpoint to get Render's outgoing IP (remove after setup)
+@app.get("/debug/ip")
+async def get_render_ip():
+    """Get Render's outgoing IP address for Azure firewall configuration"""
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get("https://httpbin.org/ip")
+            return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
 # Enable CORS for React frontend
 allowed_origins = [
     "http://localhost:3000", 
