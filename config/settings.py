@@ -34,7 +34,7 @@ class Settings:
     AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://maeaioai01.openai.azure.com/")
     AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
     AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
-    AZURE_DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o-quick")
+    AZURE_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-quick")
     AZURE_STT_DEPLOYMENT_NAME = os.getenv("AZURE_STT_DEPLOYMENT_NAME", "whisper")
     AZURE_TTS_DEPLOYMENT_NAME = os.getenv("AZURE_TTS_DEPLOYMENT_NAME", "tts")
     AZURE_TTS_API_VERSION: str = "2024-04-01-preview"
