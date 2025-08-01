@@ -35,7 +35,6 @@ class IntactBotUI:
             "payload": self.current_payload,
             "is_form_complete": self.is_form_complete,
         }
-        
         self.initial_chat_history = []
     
     async def start_fnol_process(self):
