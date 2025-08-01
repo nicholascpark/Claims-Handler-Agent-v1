@@ -265,7 +265,7 @@ function App() {
       setIsLoading(true);
       
       // Show helpful message about cold start
-      toast.info('Waking up backend service... This may take up to 90 seconds on free tier.', {
+      toast.info('Waking up backend service... Render free tier can take 50+ seconds to spin up. Please be patient! ☕', {
         autoClose: false,
         toastId: 'waking-up'
       });
@@ -322,7 +322,7 @@ function App() {
         <ErrorBanner>
           ⚠️ {backendError}
           <div style={{ marginTop: '8px', fontSize: '0.9em', opacity: 0.8 }}>
-            💡 <strong>Free Tier Note:</strong> Backend services sleep after 15 minutes of inactivity and take 30-90 seconds to wake up.
+            💡 <strong>Free Tier Note:</strong> Backend services sleep after 15 minutes of inactivity and take 50+ seconds to wake up (Render limitation).
           </div>
           <button onClick={retryBackendConnection} disabled={isLoading}>
             {isLoading ? 'Waking Up...' : 'Retry Connection'}

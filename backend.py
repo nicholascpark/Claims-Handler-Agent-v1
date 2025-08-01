@@ -96,7 +96,11 @@ if os.getenv("RENDER_EXTERNAL_URL"):
 
 # Allow all origins for Render deployments (you can restrict this later)
 if os.getenv("ENVIRONMENT") == "production":
-    allowed_origins.append("https://*.onrender.com")
+    # Add specific known Render URLs for production
+    allowed_origins.extend([
+        "https://intactbot-frontend.onrender.com",  # Your specific frontend URL
+        "https://intactbot-frontend-xxx.onrender.com",  # In case URL is different
+    ])
 
 app.add_middleware(
     CORSMiddleware,
@@ -105,6 +109,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Debug CORS configuration
+print(f"🔧 CORS allowed origins: {allowed_origins}")
+print(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
 
 class SessionData:
     """Enhanced session data with timestamp for cleanup"""

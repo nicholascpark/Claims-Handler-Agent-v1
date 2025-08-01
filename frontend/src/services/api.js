@@ -2,6 +2,12 @@ import axios from 'axios';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
+// Debug logging to help troubleshoot
+console.log('🔧 Frontend API Configuration:');
+console.log('REACT_APP_API_URL from env:', process.env.REACT_APP_API_URL);
+console.log('Final API_BASE_URL being used:', API_BASE_URL);
+console.log('Environment:', process.env.NODE_ENV);
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -73,8 +79,9 @@ api.interceptors.response.use(
 // Debug function to test backend connectivity
 window.testBackendConnection = async () => {
   console.log('Testing backend connection...');
+  console.log('Using URL:', `${API_BASE_URL}/health`);
   try {
-    const response = await fetch('http://localhost:8000/health');
+    const response = await fetch(`${API_BASE_URL}/health`);
     const data = await response.json();
     console.log('✅ Backend connection successful:', data);
     return data;
@@ -82,6 +89,40 @@ window.testBackendConnection = async () => {
     console.error('❌ Backend connection failed:', error);
     throw error;
   }
+};
+
+// Enhanced debug function to test exact configuration
+window.debugFrontendConfig = () => {
+  console.log('🔧 Frontend Configuration Debug:');
+  console.log('REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
+  console.log('API_BASE_URL:', API_BASE_URL);
+  console.log('Expected backend:', 'https://intactbot-backend.onrender.com');
+  console.log('URLs match:', API_BASE_URL === 'https://intactbot-backend.onrender.com');
+  
+  // Test if we can reach the backend
+  console.log('Testing connection to configured URL...');
+  return fetch(`${API_BASE_URL}/health`)
+    .then(response => response.json())
+    .then(data => {
+      console.log('✅ Connection successful with configured URL:', data);
+      return { success: true, data };
+    })
+    .catch(error => {
+      console.error('❌ Connection failed with configured URL:', error);
+      
+      // Test direct URL as fallback
+      console.log('Testing direct URL as fallback...');
+      return fetch('https://intactbot-backend.onrender.com/health')
+        .then(response => response.json())
+        .then(data => {
+          console.log('✅ Direct URL works, environment variable issue confirmed:', data);
+          return { success: false, error: 'Environment variable not properly set', directUrlWorks: true };
+        })
+        .catch(fallbackError => {
+          console.error('❌ Both URLs failed:', fallbackError);
+          return { success: false, error: 'Network/CORS issue', directUrlWorks: false };
+        });
+    });
 };
 
 export const chatApi = {

@@ -26,12 +26,6 @@ httpx>=0.25.0
 python-jose[cryptography]
 passlib[bcrypt]
 
-# Core application dependencies
-pytz  # Timezone handling
-pgeocode  # Geocoding functionality
-pandas  # Data manipulation
-aiohttp  # Async HTTP client
-
 # Development and testing
 pytest
 pytest-asyncio
@@ -41,3 +35,8 @@ flake8
 # Optional dependencies for enhanced features
 pillow  # Image processing if needed
 aiofiles  # Async file operations
+
+pytz
+pandas
+aiohttp
+pgeocode
