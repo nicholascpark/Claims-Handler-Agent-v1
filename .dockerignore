@@ -1,0 +1,62 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+DEPLOYMENT.md
+*.md
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Node modules and frontend build artifacts
+frontend/node_modules
+frontend/build
+frontend/.env*
+node_modules
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Test files
+test_*
+*_test.py
+tests/
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+
+# Temporary files
+temp_*
+*.tmp
+
+# Coverage reports
+htmlcov/
+.coverage
+.pytest_cache 

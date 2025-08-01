@@ -1,37 +1,42 @@
-# Core AI/ML Dependencies (order matters for faster installs)
-trustcall
-langchain-core
+# Existing LangGraph and AI dependencies
+langgraph
 langchain
 langchain-openai
-langgraph
-pydantic>=2.0.0
+langchain-core
+pydantic
+python-dotenv
+trustcall
 
-# Environment and Configuration
-python-dotenv>=1.0.0
+# Database and state management
+langchain-community
+SQLAlchemy
 
-# HTTP and Network
-httpx
-aiohttp
-requests==2.32.3
-urllib3==2.2.2
-certifi==2024.7.4
-
-# LangSmith (optional for tracing)
-langsmith
-
-# UI Framework
-gradio
-
-# Audio Processing (optional for voice features)
-sounddevice
+# Audio processing
+soundfile
+numpy
 scipy
 
-# Geolocation
+# FastAPI backend dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart
+httpx>=0.25.0
+
+# CORS and security
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Development and testing
+pytest
+pytest-asyncio
+black
+flake8
+
+# Optional dependencies for enhanced features
+pillow  # Image processing if needed
+aiofiles  # Async file operations
+
+pytz
+pandas
+aiohttp
 pgeocode
-
-# System Dependencies
-charset-normalizer==3.3.2
-colorama==0.4.6
-
-# Windows-specific (conditional install)
-pywin32==306; sys_platform == "win32"

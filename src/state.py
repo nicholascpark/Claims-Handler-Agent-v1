@@ -11,6 +11,7 @@ class ConvoState(TypedDict):
     - Uses Annotated for efficient list operations
     - Optional fields reduce memory when not needed
     - Primitive types (bool, int) for fast access
+    - Enhanced to support TrustCall patch operations
     """
     messages: Annotated[list, operator.add]
     payload: Optional[FNOLPayload]
@@ -27,6 +28,7 @@ def initialize_convo_state() -> ConvoState:
     - Minimal initial message to reduce memory
     - Example payload only created once and reused
     - Boolean defaults set explicitly for clarity
+    - All fields initialized for TrustCall compatibility
     """
     return ConvoState(
         messages=[HumanMessage(content=".")],   
