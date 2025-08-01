@@ -101,6 +101,14 @@ if os.getenv("ENVIRONMENT") == "production":
         "https://intactbot-frontend.onrender.com",  # Your specific frontend URL
         "https://intactbot-frontend-xxx.onrender.com",  # In case URL is different
     ])
+    
+    # Add your actual frontend URL from environment if set
+    if os.getenv("FRONTEND_DEPLOY_URL"):
+        allowed_origins.append(os.getenv("FRONTEND_DEPLOY_URL"))
+
+# Temporary: Allow all HTTPS origins for debugging (remove in production)
+if os.getenv("ENVIRONMENT") == "production" and os.getenv("DEBUG_CORS") == "true":
+    allowed_origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
