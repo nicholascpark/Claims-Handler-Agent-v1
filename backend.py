@@ -94,6 +94,20 @@ async def get_render_ip():
     except Exception as e:
         return {"error": str(e)}
 
+# Debug endpoint to check Azure OpenAI configuration
+@app.get("/debug/azure-config")
+async def get_azure_config():
+    """Debug Azure OpenAI configuration"""
+    from config.settings import settings
+    return {
+        "azure_endpoint": settings.AZURE_OPENAI_ENDPOINT,
+        "azure_deployment": settings.AZURE_DEPLOYMENT_NAME,
+        "api_version": settings.AZURE_OPENAI_API_VERSION,
+        "has_azure_key": bool(settings.AZURE_OPENAI_API_KEY),
+        "has_openai_key": bool(settings.OPENAI_API_KEY),
+        "constructed_url": f"{settings.AZURE_OPENAI_ENDPOINT}openai/deployments/{settings.AZURE_DEPLOYMENT_NAME}/chat/completions?api-version={settings.AZURE_OPENAI_API_VERSION}"
+    }
+
 # Enable CORS for React frontend
 allowed_origins = [
     "http://localhost:3000", 
