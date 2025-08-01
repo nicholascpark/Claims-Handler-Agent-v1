@@ -4,9 +4,9 @@ import base64
 import tempfile
 import os
 from typing import Dict, Any, List, Optional, Tuple
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 from io import BytesIO
@@ -772,6 +772,70 @@ async def clear_cache():
         session.response_cache.clear()
     
     return {"message": "All caches cleared successfully"}
+
+@app.post("/submit-loss-notice")
+async def submit_loss_notice(request: Request):
+    """
+    Submit complete loss notice to external claims system.
+    This endpoint is called by the agent when the form is complete.
+    """
+    try:
+        payload = await request.json()
+        
+        # Log the complete payload submission
+        print(f"📋 Complete payload submitted: {json.dumps(payload, indent=2)}")
+        
+        # Validate payload completeness
+        if not payload or not payload.get("claim"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Invalid or incomplete payload"}
+            )
+        
+        # TODO: Replace with actual external API integration
+        # For now, simulate processing and return a mock response
+        
+        # Generate a mock claim ID
+        import uuid
+        import time
+        claim_id = f"CLM-{int(time.time())}-{str(uuid.uuid4())[:8].upper()}"
+        
+        # Simulate external API call delay
+        await asyncio.sleep(1)
+        
+        # Mock successful response
+        response_data = {
+            "success": True,
+            "claim_id": claim_id,
+            "status": "submitted",
+            "message": "Loss notice submitted successfully",
+            "next_steps": [
+                "An adjuster will be assigned within 24 hours",
+                "You will receive a confirmation email shortly",
+                "Keep your claim ID for reference: " + claim_id
+            ],
+            "estimated_processing_time": "2-3 business days"
+        }
+        
+        # TODO: Add actual integrations here:
+        # - Send to claims management system
+        # - Create database record
+        # - Send confirmation email
+        # - Trigger workflows
+        
+        return JSONResponse(content=response_data)
+        
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid JSON payload"}
+        )
+    except Exception as e:
+        print(f"❌ Error submitting loss notice: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error during submission"}
+        )
 
 # Graceful shutdown handler
 @app.on_event("shutdown")
