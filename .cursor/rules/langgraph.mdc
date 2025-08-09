@@ -1,0 +1,5 @@
+---
+description: Begin by reading and referencing the current todo.md and progress.md and next_steps.md files to understand the project status, then identify which specific tasks, phases, or tracking elements are relevant to the user's request and update the progress tracker with any completed work, newly discovered requirements, or status changes including session notes, blockers without adding timelines. Be test driven for any new update or changes before marking as complete. After addressing the user's request, evolve and refine these markdown documents by adding newly identified tasks to the todo list, updating task statuses and progress, logging session activities with notes, and ensuring the migration plan remains comprehensive and current with any architectural decisions, technical discoveries, or scope changes that emerge during the development process. 
+globs:
+alwaysApply: false
+---
