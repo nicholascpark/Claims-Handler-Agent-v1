@@ -1,5 +1,0 @@
----
-description: No need to test and rebuild each time.
-globs:
-alwaysApply: false
----

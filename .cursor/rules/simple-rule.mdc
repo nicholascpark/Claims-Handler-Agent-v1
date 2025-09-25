@@ -1,5 +1,0 @@
----
-description: Ensure that minimal code changes are made to achieve the functionality. Maintain all existing interface and functionalities without introducing new ones.
-globs:
-alwaysApply: false
----

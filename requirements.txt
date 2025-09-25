@@ -1,42 +1,43 @@
-# Existing LangGraph and AI dependencies
-langgraph
-langchain
-langchain-openai
-langchain-core
-pydantic
-python-dotenv
-trustcall
+# Core Dependencies for Claims Handler Agent v1 - Simplified Backend
+# Based on OpenAI Chat Supervisor pattern
 
-# Database and state management
-langchain-community
-SQLAlchemy
+# Essential AI and API dependencies
+openai>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
 
-# Audio processing
-soundfile
-numpy
-scipy
+# Location services (preserved from original)
+pgeocode
+pandas
 
-# FastAPI backend dependencies
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-python-multipart
-httpx>=0.25.0
+# Async support for API integration
+aiohttp
+asyncio
 
-# CORS and security
-python-jose[cryptography]
-passlib[bcrypt]
+# Voice Processing Dependencies for Enhanced Test Script
+websockets>=12.0
+pyaudio>=0.2.11
+numpy>=2.0.0
+sounddevice>=0.4.6
 
 # Development and testing
 pytest
 pytest-asyncio
 black
-flake8
 
-# Optional dependencies for enhanced features
-pillow  # Image processing if needed
-aiofiles  # Async file operations
+# Optional: FastAPI for potential web interface
+fastapi
+uvicorn[standard]
 
+# Optional: Enhanced features
 pytz
-pandas
-aiohttp
-pgeocode
+gunicorn
+sounddevice
+
+# Note: Removed complex dependencies from previous version:
+# - langchain, langgraph (replaced with direct OpenAI integration)
+# - trustcall (custom payload handling)
+# - SQLAlchemy (simplified state management)
+# - Audio processing libs (handled by OpenAI Realtime API)
+# - CORS/security (simplified for standalone operation)
