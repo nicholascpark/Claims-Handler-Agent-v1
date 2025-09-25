@@ -13,12 +13,15 @@ except ImportError:
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
     
-    # OpenAI API Configuration
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_MODEL: str = "gpt-4.1"
+    # Azure OpenAI Configuration
+    AZURE_OPENAI_ENDPOINT: Optional[str] = None
+    AZURE_OPENAI_API_KEY: Optional[str] = None
+    AZURE_OPENAI_CHAT_API_VERSION: Optional[str] = None
+    AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: Optional[str] = None
+    AZURE_OPENAI_REALTIME_API_VERSION: Optional[str] = None
+    AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME: Optional[str] = None
     
     # Audio and Realtime API Settings
-    REALTIME_MODEL: str = "gpt-4o-realtime-preview-2025-06-03"
     AUDIO_FORMAT: str = "pcm16"
     SAMPLE_RATE: int = 24000
     AUDIO_CHANNELS: int = 1
@@ -80,7 +83,12 @@ settings = Settings()
 def validate_required_settings():
     """Validate that required settings are present"""
     required_settings = [
-        ("OPENAI_API_KEY", settings.OPENAI_API_KEY),
+        ("AZURE_OPENAI_ENDPOINT", settings.AZURE_OPENAI_ENDPOINT),
+        ("AZURE_OPENAI_API_KEY", settings.AZURE_OPENAI_API_KEY),
+        ("AZURE_OPENAI_CHAT_API_VERSION", settings.AZURE_OPENAI_CHAT_API_VERSION),
+        ("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME),
+        ("AZURE_OPENAI_REALTIME_API_VERSION", settings.AZURE_OPENAI_REALTIME_API_VERSION),
+        ("AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME", settings.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME),
     ]
     
     missing_settings = [

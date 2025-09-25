@@ -220,73 +220,33 @@ class ClaimsVoiceAgent:
         }
     
     async def create_session(self) -> Optional[str]:
-        """Create ephemeral session with OpenAI Realtime API"""
+        """Azure Realtime: No ephemeral session required (kept for compatibility)."""
         try:
-            import aiohttp
-            import ssl
-            
-            headers = {
-                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            session_payload = {
-                "model": settings.REALTIME_MODEL,
-                "voice": settings.JUNIOR_AGENT_VOICE
-            }
-            
-            # Handle SSL verification for corporate environments
-            ssl_context = None
-            if os.getenv("OPENAI_DISABLE_SSL_VERIFY", "").lower() == "true":
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-                self.display_system_message("⚠️  SSL verification disabled for corporate environment")
-            
-            # Create connector with SSL configuration
-            connector = aiohttp.TCPConnector(ssl=ssl_context) if ssl_context else None
-            
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    "https://api.openai.com/v1/realtime/sessions",
-                    headers=headers,
-                    json=session_payload
-                ) as response:
-                    
-                    if response.status == 200:
-                        session_data = await response.json()
-                        
-                        if "client_secret" in session_data:
-                            self.session_id = session_data.get("id", "unknown")
-                            self.display_system_message(f"✅ Session created: {self.session_id}")
-                            return session_data["client_secret"]["value"]
-                        else:
-                            self.display_system_message("❌ Failed to create session: No client secret")
-                            return None
-                    else:
-                        error_text = await response.text()
-                        self.display_system_message(f"❌ Session creation failed: {response.status} - {error_text}")
-                        return None
-                
+            # Azure OpenAI Realtime does not require a separate ephemeral session token.
+            # WebSocket auth uses the API key directly via header.
+            return None
         except Exception as e:
-            self.display_system_message(f"❌ Session creation error: {e}")
+            self.display_system_message(f"❌ Session setup error: {e}")
             return None
     
-    async def connect_websocket(self, ephemeral_key: str) -> bool:
-        """Connect to OpenAI Realtime API WebSocket"""
+    async def connect_websocket(self) -> bool:
+        """Connect to Azure OpenAI Realtime WebSocket"""
         try:
             import ssl
             
-            # Build WebSocket URL with authorization
-            ws_url = f"wss://api.openai.com/v1/realtime?model={settings.REALTIME_MODEL}"
-            
-            # Create headers dictionary for auth
+            # Build Azure Realtime WebSocket URL
+            endpoint = (settings.AZURE_OPENAI_ENDPOINT or "").rstrip('/')
+            api_version = settings.AZURE_OPENAI_REALTIME_API_VERSION
+            deployment = settings.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME
+            base_https = f"{endpoint}/openai/realtime?api-version={api_version}&deployment={deployment}"
+            ws_url = base_https.replace("https://", "wss://").replace("http://", "ws://")
+
+            # Headers with Azure API key
             headers = [
-                ("Authorization", f"Bearer {ephemeral_key}"),
-                ("OpenAI-Beta", "realtime=v1")
+                ("api-key", settings.AZURE_OPENAI_API_KEY or "")
             ]
-            
-            self.display_system_message("🔌 Connecting to OpenAI Realtime API...")
+
+            self.display_system_message("🔌 Connecting to Azure OpenAI Realtime API...")
             
             # Handle SSL verification for WebSocket in corporate environments
             ssl_context = None
@@ -726,7 +686,7 @@ class ClaimsVoiceAgent:
         print("  Junior/Supervisor Pattern - OpenAI Realtime Agents")
         print("=" * 70)
         print(f"Company: {settings.COMPANY_NAME}")
-        print(f"Model: {settings.REALTIME_MODEL}")
+        print(f"Deployment: {settings.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME}")
         print(f"Voice: {settings.JUNIOR_AGENT_VOICE}")
         print(f"Sample Rate: {self.sample_rate}Hz")
         print(f"Pattern: Junior Agent + Supervisor Tool Calls")
@@ -819,13 +779,8 @@ class ClaimsVoiceAgent:
             
             self.display_instructions()
             
-            # Create session
-            ephemeral_key = await self.create_session()
-            if not ephemeral_key:
-                return
-            
-            # Connect WebSocket
-            if not await self.connect_websocket(ephemeral_key):
+            # Connect WebSocket (Azure)
+            if not await self.connect_websocket():
                 return
             
             # Setup session

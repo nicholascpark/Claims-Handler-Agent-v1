@@ -267,9 +267,9 @@ class GetNextResponseFromSupervisor:
                 if item.get("type") == "message"
             ]
         
-        # Create request body in OpenAI format
+        # Create request body; use Azure chat deployment name
         request_body = {
-            "model": settings.OPENAI_MODEL,
+            "model": settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME,
             "input": [
                 {
                     "type": "message",
