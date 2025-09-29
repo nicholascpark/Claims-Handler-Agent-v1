@@ -112,18 +112,35 @@ class ClaimsVoiceAgent:
 
     def select_microphone_device(self) -> bool:
         try:
+            # Query all audio devices
             devices = sd.query_devices()
             input_devices = []
+            
+            # Also show the default output device info
+            try:
+                default_out_id = sd.default.device[1]
+                default_out = devices[default_out_id] if default_out_id is not None else None
+            except:
+                default_out = None
+                
             for i, device in enumerate(devices):
                 if device.get('max_input_channels', 0) > 0:
                     input_devices.append((i, device))
+                    
             if not input_devices:
                 print("❌ No input devices found!")
                 return False
 
             print("\n🎤 MICROPHONE DEVICE SELECTION")
             print("=" * 50)
-            print("Available microphone devices:\n")
+            
+            # Show audio system info
+            print(f"Audio System: {sd.query_hostapis()[0]['name']}")
+            print(f"Target Format: {self.audio.sample_rate}Hz, {self.audio.channels}ch, {self.audio.dtype}")
+            if default_out:
+                print(f"Default Output: {default_out['name']} ({default_out.get('default_samplerate', 'n/a')}Hz)")
+            print("\nAvailable microphone devices:\n")
+            
             try:
                 default_in = sd.default.device[0]
             except Exception:
@@ -133,8 +150,8 @@ class ClaimsVoiceAgent:
                 default_marker = " [DEFAULT]" if default_in is not None and device_id == default_in else ""
                 print(f"   {idx + 1}: {device['name']}{default_marker}")
                 print(f"      Device ID: {device_id}")
-                print(f"      Max Input Channels: {device['max_input_channels']}")
-                print(f"      Default Sample Rate: {device.get('default_samplerate', 'n/a')}")
+                print(f"      Channels: {device['max_input_channels']}")
+                print(f"      Sample Rate: {device.get('default_samplerate', 'n/a')}Hz")
                 print()
 
             while True:
@@ -186,44 +203,78 @@ class ClaimsVoiceAgent:
             return False
 
     def _output_callback(self, outdata, frames, time_info, status):
+        """Audio output callback - keep it simple and robust"""
         try:
+            # Always clear the output buffer first
             outdata[:] = 0
+            
+            # Check for underrun/overflow status
+            if status:
+                print(f"⚠️  Audio callback status: {status}")
+            
             bytes_needed = frames * self.audio.channels * 2
+            
             with self._playback_lock:
-                # If we are prebuffering a new assistant turn, wait until we have
-                # enough audio to avoid an early underflow that causes a perceptible pause
-                if self._prebuffering and len(self.playback_buffer) < self._prebuffer_bytes:
-                    return
-                elif self._prebuffering and len(self.playback_buffer) >= self._prebuffer_bytes:
-                    self._prebuffering = False
-                if len(self.playback_buffer) > 0:
-                    to_copy = min(bytes_needed, len(self.playback_buffer))
-                    chunk = bytes(self.playback_buffer[:to_copy])
-                    del self.playback_buffer[:to_copy]
+                # Handle prebuffering for smooth playback start
+                if self._prebuffering:
+                    if len(self.playback_buffer) < self._prebuffer_bytes:
+                        return  # Wait for more data
+                    else:
+                        self._prebuffering = False
+                
+                # Get audio data from buffer
+                if len(self.playback_buffer) >= bytes_needed:
+                    chunk = bytes(self.playback_buffer[:bytes_needed])
+                    del self.playback_buffer[:bytes_needed]
+                elif len(self.playback_buffer) > 0:
+                    chunk = bytes(self.playback_buffer)
+                    self.playback_buffer.clear()
                 else:
-                    chunk = b""
-            if chunk:
-                total_samples = frames * self.audio.channels
-                out_arr = np.zeros(total_samples, dtype=np.int16)
-                chunk_arr = np.frombuffer(chunk, dtype=np.int16)
-                max_samples = min(total_samples, chunk_arr.size)
-                out_arr[:max_samples] = chunk_arr[:max_samples]
-                outdata[:] = out_arr.reshape(frames, self.audio.channels)
-        except Exception:
-            pass
+                    return  # No data to play
+            
+            # Convert and output audio data
+            audio_array = np.frombuffer(chunk, dtype=np.int16)
+            
+            # Ensure we have the right shape for output
+            if len(audio_array) > 0:
+                # Calculate how many complete frames we can fill
+                samples_per_frame = self.audio.channels
+                complete_frames = min(frames, len(audio_array) // samples_per_frame)
+                
+                if complete_frames > 0:
+                    # Reshape audio data to match output format
+                    audio_data = audio_array[:complete_frames * samples_per_frame]
+                    outdata[:complete_frames] = audio_data.reshape(complete_frames, samples_per_frame)
+                    
+        except Exception as e:
+            print(f"❌ Audio callback error: {e}")
 
     def _open_output_stream(self) -> None:
+        """Open audio output stream with proper error handling"""
+        if self._output_stream is not None:
+            return  # Already open
+            
         try:
-            if self._output_stream is None:
-                self._output_stream = sd.OutputStream(
-                    samplerate=self.audio.sample_rate,
-                    channels=self.audio.channels,
-                    dtype=self.audio.dtype,
-                    blocksize=self.audio.chunk_size,
-                    callback=self._output_callback,
-                )
-                self._output_stream.start()
-        except Exception:
+            # Use default output device (None) for better compatibility
+            self._output_stream = sd.OutputStream(
+                device=None,  # Use system default output device
+                samplerate=self.audio.sample_rate,
+                channels=self.audio.channels,
+                dtype=self.audio.dtype,
+                blocksize=self.audio.chunk_size,
+                callback=self._output_callback,
+                latency='low'  # Request low latency for real-time audio
+            )
+            self._output_stream.start()
+            print(f"✅ Audio output started: {self.audio.sample_rate}Hz, {self.audio.channels}ch")
+            
+        except sd.PortAudioError as e:
+            print(f"❌ PortAudio error: {e}")
+            print("💡 Try: 1) Check audio drivers, 2) Close other audio apps, 3) Restart audio service")
+            self._output_stream = None
+            
+        except Exception as e:
+            print(f"❌ Failed to open audio output: {e}")
             self._output_stream = None
 
     def _close_output_stream(self) -> None:
@@ -239,28 +290,49 @@ class ClaimsVoiceAgent:
             self._output_stream = None
 
     async def _mic_stream_loop(self) -> None:
+        """Microphone input loop with proper error handling"""
         try:
+            # Open input stream with selected device
             with sd.InputStream(
                 device=self.selected_input_device,
                 channels=self.audio.channels,
                 samplerate=self.audio.sample_rate,
                 dtype=self.audio.dtype,
                 blocksize=self.audio.chunk_size,
+                latency='low'  # Request low latency
             ) as stream:
+                print(f"✅ Microphone input started")
+                
                 while not self._closing:
-                    data, _ = stream.read(self.audio.chunk_size)
-                    if data is None:
-                        await asyncio.sleep(0.005)
-                        continue
-                    b = data.tobytes()
-                    if not b:
-                        continue
-                    await self._send({
-                        "type": "input_audio_buffer.append",
-                        "audio": base64.b64encode(b).decode("ascii"),
-                    })
-        except Exception:
-            pass
+                    try:
+                        # Read audio data
+                        data, overflowed = stream.read(self.audio.chunk_size)
+                        
+                        if overflowed:
+                            print("⚠️  Input overflow detected")
+                            
+                        if data is None or len(data) == 0:
+                            await asyncio.sleep(0.001)
+                            continue
+                            
+                        # Convert to bytes and send
+                        audio_bytes = data.tobytes()
+                        if audio_bytes:
+                            await self._send({
+                                "type": "input_audio_buffer.append",
+                                "audio": base64.b64encode(audio_bytes).decode("ascii"),
+                            })
+                            
+                    except Exception as e:
+                        print(f"⚠️  Mic read error: {e}")
+                        await asyncio.sleep(0.1)
+                        
+        except sd.PortAudioError as e:
+            print(f"❌ Failed to open microphone: {e}")
+            print("💡 Check if the selected device is available and not in use")
+            
+        except Exception as e:
+            print(f"❌ Microphone stream error: {e}")
 
     async def _event_loop(self) -> None:
         tool_handler = get_supervisor_tool_handler()

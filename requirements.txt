@@ -11,6 +11,7 @@ python-dotenv>=1.0.0
 trustcall>=0.2.0
 langchain-openai>=0.1.0
 langchain-core>=0.2.0
+langgraph>=0.2.0
 
 # Location services (preserved from original)
 pgeocode
