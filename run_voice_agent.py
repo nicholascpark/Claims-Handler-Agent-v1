@@ -57,7 +57,7 @@ if __name__ == "__main__":
         except Exception:
             # Fallback env for any modules that may read it early
             os.environ["DISPLAY_CLAIM_JSON"] = "true"
-        print("🧾 JSON payload display enabled (will show after each field update)")
+        print("🧾 JSON payload display enabled (fetches latest status from background thread)")
 
     print()
     

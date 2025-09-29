@@ -7,8 +7,12 @@ external system integrations, completely separate from the supervisor.
 import json
 from typing import Dict, Any, Optional
 from datetime import datetime
-from src.schema.simplified_payload import SimplifiedClaim
+from src.schema.simplified_payload import PropertyClaim
 from src.config.settings import settings
+from src.prompts import AgentPrompts
+
+# For backward compatibility
+SimplifiedClaim = PropertyClaim
 
 
 class PayloadProcessorAgent:
@@ -26,7 +30,7 @@ class PayloadProcessorAgent:
         self.processing_history = []
         self.retry_count = {}
     
-    def process_claim_payload(self, claim: SimplifiedClaim, source_agent: str = "supervisor") -> Dict[str, Any]:
+    def process_claim_payload(self, claim: PropertyClaim, source_agent: str = "supervisor") -> Dict[str, Any]:
         """
         Process a completed claim payload.
         
@@ -68,16 +72,24 @@ class PayloadProcessorAgent:
                 result["errors"] = validation_result["errors"]
                 return result
             
-            # Submit to external systems (HTTP POST if configured, otherwise mock)
+            # Submit to external systems (HTTP POST if configured, otherwise enhanced mock)
             submission_result = self._submit_payload(external_payload, processing_id)
             
             if submission_result["success"]:
                 result["status"] = "completed"
                 result["external_reference"] = submission_result.get("reference_id")
                 result["confirmation_number"] = submission_result.get("confirmation_number")
+                result["adjuster_name"] = submission_result.get("adjuster_name")
+                result["adjuster_phone"] = submission_result.get("adjuster_phone") 
+                result["estimated_contact_time"] = submission_result.get("estimated_contact_time")
+                result["next_steps"] = submission_result.get("next_steps", [])
+                
+                # Enhanced completion logging
+                self._log_successful_completion(result)
             else:
                 result["status"] = "failed"
                 result["errors"] = submission_result.get("errors", ["Unknown submission error"])
+                result["retry_recommended"] = submission_result.get("retry_recommended", False)
             
         except Exception as e:
             result["status"] = "error"
@@ -123,40 +135,55 @@ class PayloadProcessorAgent:
             return self._submit_to_external_systems(payload, processing_id)
 
     
-    def _convert_to_external_format(self, claim: SimplifiedClaim) -> Dict[str, Any]:
+    def _convert_to_external_format(self, claim: PropertyClaim) -> Dict[str, Any]:
         """
-        Convert SimplifiedClaim to external system format.
+        Convert PropertyClaim nested structure to external system format.
         
-        This is where you'd adapt the simplified internal format to whatever
-        format external systems expect.
+        Handles all property types and nested damage assessment.
         """
+        
+        # Determine claim type from property type  
+        claim_type_mapping = {
+            "auto": "AUTO",
+            "home": "PROPERTY", 
+            "commercial": "COMMERCIAL",
+            "condo": "PROPERTY",
+            "specialty": "SPECIALTY"
+        }
+        claim_type = claim_type_mapping.get(claim.property_damage.property_type.lower(), "PROPERTY")
+        
+        # Generate claim_id if not present (new claims)
+        claim_id = claim.claim_id or self._generate_claim_id(claim.property_damage.property_type)
         
         header = {
-            "claimId": claim.claim_id,
+            "claimId": claim_id,
             "dateReported": self._get_timestamp(),
-            "claimType": "AUTO"  # Default type
+            "claimType": claim_type,
+            "propertyType": claim.property_damage.property_type
         }
+        
         # Include policy number only if provided
-        if claim.policy_number:
-            header["policyNumber"] = claim.policy_number
+        if claim.claimant.policy_number:
+            header["policyNumber"] = claim.claimant.policy_number
 
         external_format = {
             "claimHeader": header,
             "insuredParty": {
-                "name": claim.insured_name,
-                "contactPhone": claim.insured_phone
+                "name": claim.claimant.insured_name,
+                "contactPhone": claim.claimant.insured_phone
             },
             "incident": {
-                "description": claim.incident_description,
-                "dateOfLoss": claim.incident_date,
-                "timeOfLoss": claim.incident_time,
-                "locationOfLoss": claim.incident_location
+                "description": claim.incident.incident_description,
+                "dateOfLoss": claim.incident.incident_date,
+                "timeOfLoss": claim.incident.incident_time,
+                "locationOfLoss": claim.incident.incident_location
             },
-            "additionalDetails": {
-                "vehiclesInvolved": claim.vehicles_involved or [],
-                "injuriesReported": claim.injuries_reported,
-                "policeReportNumber": claim.police_report_number,
-                "witnessPresent": claim.witness_present
+            "propertyDamage": {
+                "propertyType": claim.property_damage.property_type,
+                "pointsOfImpact": claim.property_damage.points_of_impact,
+                "damageDescription": claim.property_damage.damage_description,
+                "estimatedSeverity": claim.property_damage.estimated_damage_severity,
+                "additionalDetails": claim.property_damage.additional_details or ""
             }
         }
         
@@ -204,8 +231,7 @@ class PayloadProcessorAgent:
         """
         Submit payload to external claim processing systems.
         
-        Note: This is a mock implementation. In production, this would
-        integrate with actual external APIs/systems.
+        Enhanced mock implementation with realistic responses and better logging.
         
         Args:
             payload: External format payload
@@ -215,37 +241,94 @@ class PayloadProcessorAgent:
             Submission result dictionary
         """
         
-        # Mock external system integration
-        # In production, this would call actual APIs
-        
-        # Simulate processing time and potential failure
+        # Enhanced mock external system integration
         import random
         import time
         
-        # Mock network delay
-        time.sleep(0.1)
+        print(f"[{self._get_timestamp_short()}] 📤 Submitting claim to external systems...")
         
-        # Mock success/failure (90% success rate)
-        if random.random() > 0.1:
-            # Mock successful submission
-            confirmation_number = f"CONF-{processing_id[-8:]}"
-            reference_id = f"REF-{processing_id}"
+        # Mock network delay (realistic timing)
+        time.sleep(random.uniform(0.2, 0.8))
+        
+        # Enhanced success rate (95% success for better UX)
+        if random.random() > 0.05:
+            # Generate realistic confirmation details
+            claim_id = payload.get("claimHeader", {}).get("claimId", "UNKNOWN")
+            confirmation_number = f"{settings.COMPANY_NAME[:3].upper()}-{processing_id[-8:]}"
+            reference_id = f"REF-{claim_id}-{processing_id[-6:]}"
+            
+            # Mock assignment of adjuster and next steps
+            adjusters = ["Sarah Johnson", "Mike Chen", "Lisa Rodriguez", "David Thompson"]
+            adjuster_name = random.choice(adjusters)
+            
+            print(f"[{self._get_timestamp_short()}] ✅ Claim submitted successfully")
+            print(f"[{self._get_timestamp_short()}] 📋 Confirmation: {confirmation_number}")
+            print(f"[{self._get_timestamp_short()}] 👤 Assigned Adjuster: {adjuster_name}")
             
             return {
                 "success": True,
                 "confirmation_number": confirmation_number,
                 "reference_id": reference_id,
-                "external_system": "MockClaimsAPI",
-                "submitted_at": self._get_timestamp()
+                "adjuster_name": adjuster_name,
+                "adjuster_phone": self._generate_mock_phone(),
+                "estimated_contact_time": "within 24 hours",
+                "external_system": "EnhancedMockClaimsAPI",
+                "submitted_at": self._get_timestamp(),
+                "next_steps": [
+                    f"Adjuster {adjuster_name} will contact you within 24 hours",
+                    "You will receive an email confirmation within 30 minutes", 
+                    "Please have your policy documents ready for the adjuster call",
+                    f"Your reference number is {reference_id} for future correspondence"
+                ]
             }
         else:
-            # Mock failure
+            # Mock failure with helpful messaging
+            error_types = [
+                "External system temporarily unavailable - high volume",
+                "Network timeout - please try again in a few minutes",
+                "Validation issue with external system format"
+            ]
+            error_msg = random.choice(error_types)
+            
+            print(f"[{self._get_timestamp_short()}] ⚠️ Submission failed: {error_msg}")
+            
             return {
                 "success": False,
-                "errors": ["External system temporarily unavailable"],
-                "external_system": "MockClaimsAPI",
-                "retry_recommended": True
+                "errors": [error_msg],
+                "external_system": "EnhancedMockClaimsAPI",
+                "retry_recommended": True,
+                "retry_after_seconds": 60
             }
+
+    def _generate_mock_phone(self) -> str:
+        """Generate a realistic mock phone number for adjuster contact"""
+        import random
+        area_codes = ["555", "800", "877", "866"]
+        area = random.choice(area_codes)
+        exchange = f"{random.randint(200, 999)}"
+        number = f"{random.randint(1000, 9999)}"
+        return f"{area}-{exchange}-{number}"
+
+    def _get_timestamp_short(self) -> str:
+        """Get short timestamp for inline logging"""
+        return datetime.now().strftime('%H:%M:%S')
+
+    def _generate_claim_id(self, property_type: str) -> str:
+        """Generate a new claim ID based on property type"""
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        import random
+        random_suffix = f"{random.randint(100, 999)}"
+        
+        # Property type prefix mapping
+        type_prefix = {
+            "auto": "AUTO",
+            "home": "HOME", 
+            "commercial": "COMM",
+            "condo": "CONDO",
+            "specialty": "SPEC"
+        }.get(property_type.lower(), "PROP")
+        
+        return f"CL-{type_prefix}-{timestamp}-{random_suffix}"
     
     def retry_failed_processing(self, processing_id: str, max_retries: int = None) -> Dict[str, Any]:
         """
@@ -345,6 +428,27 @@ class PayloadProcessorAgent:
         # Keep history manageable (last 100 attempts)
         if len(self.processing_history) > 100:
             self.processing_history = self.processing_history[-100:]
+
+    def _log_successful_completion(self, result: Dict[str, Any]) -> None:
+        """Log successful completion with enhanced details"""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        confirmation = result.get("confirmation_number", "N/A")
+        adjuster = result.get("adjuster_name", "TBD")
+        
+        print("\n" + "=" * 80)
+        print("🎉 CLAIM SUCCESSFULLY PROCESSED AND SUBMITTED")
+        print("=" * 80)
+        print(f"[{timestamp}] 📋 Confirmation Number: {confirmation}")
+        print(f"[{timestamp}] 👤 Assigned Adjuster: {adjuster}")
+        print(f"[{timestamp}] 📞 Contact: {result.get('adjuster_phone', 'TBD')}")
+        print(f"[{timestamp}] ⏰ Expected Contact: {result.get('estimated_contact_time', 'TBD')}")
+        
+        if result.get("next_steps"):
+            print(f"[{timestamp}] 📝 Next Steps:")
+            for i, step in enumerate(result.get("next_steps", []), 1):
+                print(f"[{timestamp}]    {i}. {step}")
+        
+        print("=" * 80 + "\n")
 
 
 def create_payload_processor() -> PayloadProcessorAgent:

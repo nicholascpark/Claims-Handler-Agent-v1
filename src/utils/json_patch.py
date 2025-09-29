@@ -1,145 +1,107 @@
-"""Lightweight JSON Patch utilities with optional Trustcall integration.
+"""Trustcall-only JSON Patch utilities for Claims Handler Agent v1
 
-This module provides a minimal JSON patch application capability for updating
-deeply nested claim data maps. It supports a subset of RFC 6902 operations
-(add, replace, remove) using either JSON Pointer paths ("/a/b/0") or dotted
-paths ("a.b.0"). When available, it can optionally delegate to Trustcall for
-more robust and inexpensive patching on complex structures.
+This module provides ONLY trustcall-based JSON patch operations with no fallbacks.
+All JSON extraction and patching operations must use trustcall for consistency
+and to leverage its inexpensive update capabilities.
+
+Based on: https://github.com/hinthornw/trustcall/blob/main/README.md
 """
 
 from typing import Any, Callable, Dict, List, Optional
 
-
-def _split_path(path: str) -> List[str]:
-    """Split a path expressed as JSON Pointer or dotted notation into parts."""
-    if not path:
-        return []
-    if path.startswith("/"):
-        # JSON Pointer: unescape ~1 -> /, ~0 -> ~
-        parts = [p.replace("~1", "/").replace("~0", "~") for p in path.split("/") if p != ""]
-        return parts
-    return path.split(".")
+try:
+    import trustcall
+except ImportError:
+    trustcall = None
 
 
-def _navigate(container: Any, parts: List[str]) -> (Any, str):
-    """Navigate to parent container for the final part, return (parent, last_key)."""
-    if not parts:
-        raise ValueError("Path cannot be empty")
-    node = container
-    for key in parts[:-1]:
-        idx = None
-        if isinstance(node, list):
-            try:
-                idx = int(key)
-            except ValueError:
-                raise KeyError(f"List index expected, got '{key}'")
-            if idx < 0 or idx >= len(node):
-                raise IndexError(f"List index out of range: {idx}")
-            node = node[idx]
-        else:
-            if key not in node or not isinstance(node[key], (dict, list)):
-                # Create missing dict nodes
-                node[key] = {}
-            node = node[key]
-    return node, parts[-1]
-
-
-def _set_value(parent: Any, key: str, value: Any) -> None:
-    if isinstance(parent, list):
-        idx = int(key)
-        if idx == len(parent):
-            parent.append(value)
-        else:
-            parent[idx] = value
-    else:
-        parent[key] = value
-
-
-def _add_value(parent: Any, key: str, value: Any) -> None:
-    if isinstance(parent, list):
-        if key == "-":
-            parent.append(value)
-            return
-        idx = int(key)
-        parent.insert(idx, value)
-    else:
-        if key in parent:
-            # Align with RFC 6902: add replaces if key exists? RFC says add allows creating new member
-            # but many implementations also allow replacing. We'll treat as set.
-            parent[key] = value
-        else:
-            parent[key] = value
-
-
-def _remove_value(parent: Any, key: str) -> None:
-    if isinstance(parent, list):
-        idx = int(key)
-        del parent[idx]
-    else:
-        if key in parent:
-            del parent[key]
+class TrustcallNotAvailableError(Exception):
+    """Raised when trustcall is not available but is required"""
+    pass
 
 
 def apply_json_patch(
     target: Dict[str, Any],
     patch_ops: List[Dict[str, Any]],
     on_field_updated: Optional[Callable[[str], None]] = None,
-    prefer_trustcall: bool = True,
 ) -> Dict[str, Any]:
-    """Apply a list of JSON patch operations to target in-place and return it.
+    """Apply a list of JSON patch operations to target using ONLY trustcall.
 
     Each operation is a dict like {"op": "replace", "path": "/a/b", "value": 1}.
-    Supported ops: add, replace, remove. Paths can be JSON Pointer or dotted.
-    If Trustcall is installed and prefer_trustcall=True, we will attempt to use
-    it; on failure or absence, fallback to the lightweight implementation.
+    Supported ops: add, replace, remove. Paths must be JSON Pointer format.
+    
+    This function REQUIRES trustcall to be installed and will raise an error
+    if trustcall is not available. No fallback methods are provided.
+    
+    Args:
+        target: The dictionary to apply patches to
+        patch_ops: List of RFC 6902 JSON patch operations
+        on_field_updated: Optional callback for field update notifications
+        
+    Returns:
+        The updated dictionary
+        
+    Raises:
+        TrustcallNotAvailableError: If trustcall is not available
+        ValueError: If patch operations are malformed
     """
-
-    if prefer_trustcall:
-        try:
-            # Best-effort import. The exact API may differ; we guard safely.
-            import trustcall  # type: ignore
-
-            if hasattr(trustcall, "apply_patch"):
-                updated = trustcall.apply_patch(target, patch_ops)  # type: ignore[attr-defined]
-                # Fire callbacks for each op path
-                if on_field_updated:
-                    for op in patch_ops:
-                        path = op.get("path") or op.get("field") or ""
-                        if path:
-                            try:
-                                on_field_updated(path if path.startswith("/") else path.replace(".", "/"))
-                            except Exception:
-                                pass
-                return updated
-        except Exception:
-            # Fall back to internal implementation silently
-            pass
-
-    # Internal minimal patcher
+    if trustcall is None:
+        raise TrustcallNotAvailableError(
+            "trustcall is required but not available. Install with: pip install trustcall"
+        )
+    
+    # Validate patch operations format
     for op in patch_ops:
-        operation = op.get("op")
-        path = op.get("path") or op.get("field")
-        if not operation or not path:
-            raise ValueError(f"Invalid patch operation: {op}")
+        if not isinstance(op, dict):
+            raise ValueError(f"Invalid patch operation format: {op}")
+        
+        if "op" not in op:
+            raise ValueError(f"Missing 'op' field in patch operation: {op}")
+        
+        if op["op"] not in ["add", "replace", "remove"]:
+            raise ValueError(f"Unsupported operation: {op['op']}")
+        
+        if "path" not in op and "field" not in op:
+            raise ValueError(f"Missing 'path' field in patch operation: {op}")
 
-        parts = _split_path(path)
-        parent, last = _navigate(target, parts)
-
-        if operation == "replace":
-            _set_value(parent, last, op.get("value"))
-        elif operation == "add":
-            _add_value(parent, last, op.get("value"))
-        elif operation == "remove":
-            _remove_value(parent, last)
+    try:
+        # Use trustcall's apply_patch function if available
+        if hasattr(trustcall, "apply_patch"):
+            updated = trustcall.apply_patch(target, patch_ops)
+            
+            # Fire callbacks for each operation path
+            if on_field_updated:
+                for op in patch_ops:
+                    path = op.get("path") or op.get("field") or ""
+                    if path:
+                        try:
+                            # Normalize path format for callback
+                            normalized_path = path if path.startswith("/") else f"/{path.replace('.', '/')}"
+                            on_field_updated(normalized_path)
+                        except Exception:
+                            # Don't let callback errors break the patching process
+                            pass
+            
+            return updated
         else:
-            raise ValueError(f"Unsupported op: {operation}")
+            raise TrustcallNotAvailableError(
+                "trustcall.apply_patch function not found. Please update trustcall to latest version."
+            )
+            
+    except Exception as e:
+        if isinstance(e, TrustcallNotAvailableError):
+            raise
+        else:
+            raise RuntimeError(f"Trustcall patch operation failed: {str(e)}")
 
-        if on_field_updated:
-            try:
-                on_field_updated(path)
-            except Exception:
-                pass
 
-    return target
+def validate_trustcall_availability() -> bool:
+    """
+    Validate that trustcall is available and properly configured.
+    
+    Returns:
+        True if trustcall is available, False otherwise
+    """
+    return trustcall is not None and hasattr(trustcall, "apply_patch")
 
 

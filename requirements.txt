@@ -1,5 +1,5 @@
-# Core Dependencies for Claims Handler Agent v1 - Simplified Backend
-# Based on OpenAI Chat Supervisor pattern
+# Core Dependencies for Claims Handler Agent v1 - Trustcall-Only Backend
+# Based on OpenAI Chat Supervisor pattern with exclusive trustcall JSON extraction
 
 # Essential AI and API dependencies
 openai>=1.0.0
@@ -7,13 +7,17 @@ pydantic>=2.0.0
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 
+# REQUIRED: Trustcall and LangChain for JSON extraction (NO FALLBACKS)
+trustcall>=0.2.0
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+
 # Location services (preserved from original)
 pgeocode
 pandas
 
 # Async support for API integration
 aiohttp
-asyncio
 
 # Voice Processing Dependencies for Enhanced Test Script
 websockets>=12.0
@@ -33,11 +37,10 @@ uvicorn[standard]
 # Optional: Enhanced features
 pytz
 gunicorn
-sounddevice
 
-# Note: Removed complex dependencies from previous version:
-# - langchain, langgraph (replaced with direct OpenAI integration)
-# - trustcall (custom payload handling)
-# - SQLAlchemy (simplified state management)
-# - Audio processing libs (handled by OpenAI Realtime API)
-# - CORS/security (simplified for standalone operation)
+# Notes:
+# - trustcall is now REQUIRED (no fallback methods available)
+# - langchain-openai REQUIRED for AzureChatOpenAI integration
+# - All JSON extraction uses trustcall exclusively
+# - SQLAlchemy omitted (no DB state in this project)
+# - asyncio is built-in to Python 3.7+, removed from requirements

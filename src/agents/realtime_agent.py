@@ -5,10 +5,10 @@ reference implementation, adapted for claims processing.
 """
 
 import json
-import random
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 from src.config.settings import settings
+from src.prompts import AgentPrompts
 
 
 @dataclass
@@ -24,10 +24,10 @@ class ClaimsRealtimeAgent:
     Junior realtime agent that handles basic interactions and defers to supervisor.
     
     Based on the OpenAI chat supervisor pattern:
-    - Handles basic greetings and chitchat only
-    - Uses filler phrases before calling supervisor
-    - Cannot make decisions or call tools directly
-    - Must use getNextResponseFromSupervisor for everything else
+    - Does not hardcode turn logic or canned responses
+    - Maintains conversation history only
+    - Delegates content generation entirely to the supervisor tool
+    - Always routes non-trivial responses through getNextResponseFromSupervisor
     """
     
     def __init__(self, name: str = "claimsAgent"):
@@ -42,92 +42,8 @@ class ClaimsRealtimeAgent:
         self.tools = [self._get_supervisor_tool_definition()]
         
     def _get_agent_instructions(self) -> str:
-        """Get agent instructions following OpenAI pattern"""
-        return f"""You are a helpful junior claims handler agent for {settings.COMPANY_NAME}. Your top priority is to perform structured intake before escalating. Defer to the Supervisor Agent after you've collected as many intake details as possible.
-
-# General Instructions
-- You are very new and can only handle basic tasks, and will rely heavily on the Supervisor Agent via the getNextResponseFromSupervisor tool
-- By default, you must always use the getNextResponseFromSupervisor tool to get your next response, except for very specific exceptions.
-- Always greet the user with "{settings.COMPANY_GREETING}"
-- If the user says "hi", "hello", or similar greetings in later messages, respond naturally and briefly instead of repeating the canned greeting.
-- In general, don't say the same thing twice, always vary it to ensure the conversation feels natural.
-- Do not use any information from examples as reference in conversation.
-
-## Tone  
-- Maintain a professional, empathetic, and helpful tone at all times.
-- Be concise but warm, especially since users may be stressed from recent incidents.
-- Use natural conversational flow.
-
-# Tools
-- You can ONLY call getNextResponseFromSupervisor
-- Do not reference or request policy lookups; proceed with intake details only.
-
-# Allow List of Permitted Actions
-You can take the following actions directly, and don't need to use getNextResponse for these:
-
-## Basic chitchat
-- Handle greetings (e.g., "hello", "hi there").
-- Engage in basic chitchat (e.g., "how are you?", "thank you").  
-- Respond to requests to repeat or clarify information (e.g., "can you repeat that?").
-
-## Collect information for Supervisor Agent tool calls
-- Request user information needed for claim processing. Refer to the Supervisor Tools section below for full definitions.
-
-### Supervisor Agent Tools
-NEVER call these tools directly, these are only provided as a reference for collecting parameters for the supervisor to use.
-
-validateClaimInfo:
-  description: Validate completeness of claim information and identify missing fields.
-  params:
-    claim_data: object (required) - Current claim data object.
-
-lookupPolicyInfo:
-  description: Look up policy information and coverage details.
-  params:
-    policy_number: string (required) - User's policy number.
-
-getLocationDetails:
-  description: Get and validate location information for the incident.
-  params:
-    location_string: string (required) - Location description from user.
-
-**You must NOT answer, resolve, or attempt to handle ANY other type of request, question, or issue yourself. For absolutely everything else, you MUST use the getNextResponseFromSupervisor tool to get your response.**
-
-# Intake-First Flow (before calling getNextResponseFromSupervisor)
-- Collect these items conversationally when relevant (one at a time):
-  1) insured name
-  2) contact phone/email
-  3) incident type and brief description
-  4) incident date/time
-  5) incident location (city/street)
-- Acknowledge what the user says and ask for the next missing item.
-- Use natural phrasing; don't dump the whole checklist at once.
-
-# getNextResponseFromSupervisor Usage
-- For ALL requests that are not strictly and explicitly listed above, you MUST ALWAYS use the getNextResponseFromSupervisor tool.
-- Do NOT attempt to answer, resolve, or speculate on any other requests, even if you think you know the answer.
-- Before calling getNextResponseFromSupervisor, you MUST ALWAYS say something to the user (see 'Sample Filler Phrases' section). Never call it without first saying something.
-  - Filler phrases must NOT indicate whether you can or cannot fulfill an action; they should be neutral.
-  - After the filler phrase YOU MUST ALWAYS call the getNextResponseFromSupervisor tool.
-- You will use this tool extensively.
-
-## How getNextResponseFromSupervisor Works
-- This asks the supervisor what to do next. The supervisor is more senior and intelligent with access to full conversation history and can call tools.
-- You must provide key context from the most recent user message, as concise as possible.
-- The supervisor analyzes the transcript, potentially calls functions, and provides a high-quality answer which you should read verbatim.
-
-# Sample Filler Phrases
-- "{random.choice(settings.FILLER_PHRASES)}"
-
-# Example Flow
-- User: "Hi"
-- Assistant: "{settings.COMPANY_GREETING}"
-- User: "I was in an accident yesterday and need to report a claim"  
-- Assistant: "{random.choice(settings.FILLER_PHRASES)}" // Required filler phrase
-- getNextResponseFromSupervisor(relevantContextFromLastUserMessage="User was in accident yesterday, wants to report claim")
-  - Returns: "I'm sorry to hear about your accident. I'll help you report this claim right away. Let's start with your full name and a phone number to reach you."
-- Assistant: "I'm sorry to hear about your accident. I'll help you report this claim right away. Let's start with your full name and a phone number to reach you."
-"""
+        """Get agent instructions from centralized prompts"""
+        return AgentPrompts.get_realtime_agent_instructions()
 
     def _get_supervisor_tool_definition(self) -> Dict[str, Any]:
         """Get the supervisor tool definition (equivalent to OpenAI pattern)"""
@@ -149,103 +65,27 @@ getLocationDetails:
         }
 
     def process_user_message(self, message: str) -> Dict[str, Any]:
-        """
-        Process user message and determine response strategy.
-        
-        Args:
-            message: User's message
-            
-        Returns:
-            Dictionary with response type and content
-        """
+        """Record the user message and request supervisor guidance every time."""
         # Add to conversation history
         self.conversation_history.append(RealtimeMessage(
             role="user",
             content=message,
             timestamp=self._get_timestamp()
         ))
-        
-        message_lower = message.lower().strip()
-        
-        # Check if this is a basic interaction we can handle
-        if self._is_basic_interaction(message_lower):
-            response = self._handle_basic_interaction(message_lower)
-            self._add_assistant_message(response)
-            
-            return {
-                "type": "direct_response",
-                "message": response,
-                "needs_supervisor": False
-            }
-        
-        # For everything else, defer to supervisor with filler phrase
-        filler_phrase = self._get_filler_phrase()
+
         context = self._extract_context_from_message(message)
-        
-        # Add filler phrase to conversation history
-        self._add_assistant_message(filler_phrase)
-        
         return {
-            "type": "supervisor_needed", 
-            "filler_phrase": filler_phrase,
+            "type": "supervisor_needed",
             "context_for_supervisor": context,
             "needs_supervisor": True,
             "conversation_history": self._get_conversation_history_for_supervisor()
         }
 
-    def _is_basic_interaction(self, message: str) -> bool:
-        """Check if this is a basic interaction we can handle directly"""
-        basic_patterns = [
-            # Greetings (only for first interaction or simple responses)
-            "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
-            # Thank you
-            "thank you", "thanks", "appreciate it",
-            # Basic politeness
-            "how are you", "how's it going",
-            # Clarification requests
-            "can you repeat", "say that again", "what did you say", "pardon",
-            "could you repeat", "excuse me"
-        ]
-        
-        # Only handle as basic if it's purely one of these patterns
-        return any(message.startswith(pattern) or message == pattern for pattern in basic_patterns)
+    def add_assistant_message(self, message: str) -> None:
+        """Public helper to record assistant messages in history."""
+        self._add_assistant_message(message)
 
-    def _handle_basic_interaction(self, message: str) -> str:
-        """Handle basic interactions directly without supervisor"""
-        
-        # Initial greetings
-        if any(greeting in message for greeting in ["hi", "hello", "hey"]):
-            if len(self.conversation_history) <= 1:  # First interaction
-                return settings.COMPANY_GREETING
-            else:
-                return random.choice([
-                    "Hello!",
-                    "Hi there!",
-                    "Yes, how can I help you?"
-                ])
-        
-        # Thank you responses
-        if any(thanks in message for thanks in ["thank you", "thanks"]):
-            return random.choice([
-                "You're welcome!",
-                "Of course, happy to help.",
-                "No problem at all."
-            ])
-        
-        # How are you responses
-        if "how are you" in message:
-            return "I'm doing well, thank you for asking. How can I help you with your claim?"
-        
-        # Clarification requests  
-        if any(clarify in message for clarify in ["repeat", "say that again", "pardon"]):
-            return "Of course, let me repeat that information for you."
-        
-        # Default basic response
-        return "I'm here to help you with your claim. What would you like to know?"
-
-    def _get_filler_phrase(self) -> str:
-        """Get a random filler phrase to use while calling supervisor"""
-        return random.choice(settings.FILLER_PHRASES)
+    # Filler phrases are intentionally not used in intake; avoid "checking" language
 
     def _extract_context_from_message(self, message: str) -> str:
         """Extract key context from the most recent user message for supervisor"""
@@ -292,6 +132,10 @@ getLocationDetails:
             })
         return history
 
+    # Public alias for external callers to avoid using a private method name
+    def get_conversation_history_for_supervisor(self) -> List[Dict[str, Any]]:
+        return self._get_conversation_history_for_supervisor()
+
     def _add_assistant_message(self, message: str):
         """Add assistant message to conversation history"""
         self.conversation_history.append(RealtimeMessage(
@@ -314,18 +158,19 @@ getLocationDetails:
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16", 
             "input_audio_transcription": {
-                "model": "whisper-1",
-                "language": "en",
+                "model": settings.TRANSCRIPTION_MODEL,
+                "language": settings.TRANSCRIPTION_LANGUAGE,
                 "prompt": "You are transcribing an English insurance claim intake call. Common words: policy, claim, coverage, accident, incident, pipe, water, hail, storm, collision, location."
             },
             "turn_detection": {
                 "type": "server_vad",
                 # Make VAD more conservative and give user more time to speak
-                "threshold": 0.9,
-                "prefix_padding_ms": 800,
-                "silence_duration_ms": 2000
+                "threshold": settings.VAD_THRESHOLD,
+                "prefix_padding_ms": settings.VAD_PREFIX_PADDING_MS,
+                "silence_duration_ms": settings.VAD_SILENCE_DURATION_MS
             },
             "tools": self.tools,
+            # Allow tools; per-turn calls explicitly specify the function to avoid duplicates
             "tool_choice": "auto"
         }
 

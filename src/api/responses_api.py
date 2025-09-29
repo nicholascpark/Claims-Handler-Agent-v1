@@ -11,6 +11,7 @@ from datetime import datetime
 
 from src.agents.supervisor_agent import create_supervisor_agent
 from src.config.settings import settings
+from src.utils.time_utils import create_temporal_context_system_message
 
 
 class ResponsesAPI:
@@ -22,7 +23,13 @@ class ResponsesAPI:
     """
     
     def __init__(self):
-        self.supervisor_agent = create_supervisor_agent()
+        # Use a shared singleton so state persists across calls
+        global _shared_supervisor
+        try:
+            _shared_supervisor
+        except NameError:
+            _shared_supervisor = create_supervisor_agent()
+        self.supervisor_agent = _shared_supervisor
     
     async def process_request(self, request_body: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -78,14 +85,12 @@ class ResponsesAPI:
         """Extract relevant context from the request"""
         input_items = request_body.get("input", [])
         
-        # Look for the context in the system message pattern from OpenAI implementation
+        # Prefer explicit marker regardless of role
+        marker = "=== Relevant Context From Last User Message ==="
         for item in input_items:
-            if (item.get("type") == "message" and 
-                item.get("role") == "user" and
-                "=== Relevant Context From Last User Message ===" in item.get("content", "")):
-                
+            if item.get("type") == "message" and marker in item.get("content", ""):
                 content = item["content"]
-                parts = content.split("=== Relevant Context From Last User Message ===")
+                parts = content.split(marker)
                 if len(parts) > 1:
                     return parts[1].strip()
         
@@ -267,27 +272,39 @@ class GetNextResponseFromSupervisor:
                 if item.get("type") == "message"
             ]
         
-        # Create request body; use Azure chat deployment name
+        # Create request body; use Azure chat deployment name with structured history
+        input_items: List[Dict[str, Any]] = [
+            {
+                "type": "message",
+                "role": "system",
+                "content": "You are processing a request from the junior claims agent."
+            },
+            {
+                "type": "message",
+                "role": "system",
+                "content": create_temporal_context_system_message(),
+            },
+            {
+                "type": "message",
+                "role": "system",
+                "content": f"=== Relevant Context From Last User Message ===\n{relevant_context}"
+            },
+        ]
+
+        for msg in conversation_history:
+            try:
+                input_items.append({
+                    "type": "message",
+                    "role": msg.get("role", "user"),
+                    "content": msg.get("content", "")
+                })
+            except Exception:
+                continue
+
         request_body = {
             "model": settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME,
-            "input": [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": "You are processing a request from the junior claims agent."
-                },
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": f"""==== Conversation History ====
-{json.dumps(conversation_history, indent=2)}
-
-==== Relevant Context From Last User Message ===
-{relevant_context}
-"""
-                }
-            ],
-            "tools": []  # Tools are handled internally by supervisor
+            "input": input_items,
+            "tools": []
         }
         
         try:

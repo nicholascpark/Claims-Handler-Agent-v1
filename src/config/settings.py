@@ -54,21 +54,32 @@ class Settings(BaseSettings):
     PAYLOAD_PROCESSOR_ENDPOINT: Optional[str] = None
     MAX_PAYLOAD_SIZE: int = 10240  # 10KB
     
-    # Conversation Flow
+    # Conversation Flow (kept for compatibility; avoid any "checking" phrasing)
     FILLER_PHRASES: list = [
-        "Let me look into your claim...",
-        "One moment while I check that...",
-        "Let me get the details for you...",
-        "Just checking our records...",
-        "Let me verify that information..."
+        "Thanks, I have that noted.",
+        "Understood, thank you.",
+        "Okay, got it.",
+        "Thanks for confirming.",
+        "I appreciate that."
     ]
     
     # Debug / Display
     DISPLAY_CLAIM_JSON: bool = False
     
+    # LangSmith / Tracing
+    LANGSMITH_PROJECT: Optional[str] = None
+    LANGSMITH_ENDPOINT: Optional[str] = None
+    LANGCHAIN_TRACING: Optional[str] = None
+    LANGSMITH_API_KEY: Optional[str] = None
+
     # Company Information
-    COMPANY_NAME: str = "Intact Insurance"
-    COMPANY_GREETING: str = "Hi, you've reached Intact Insurance, how can I help you with your claim today?"
+    COMPANY_NAME: str = "Intact Specialty Insurance"
+    COMPANY_GREETING: str = "Hi, you've reached Intact Specialty Insurance, how can I help you with your claim today?"
+    
+    # Timezone and temporal overrides
+    TIMEZONE: str = "America/New_York"
+    # Optional ISO string to fix "now" for demos/tests, e.g. "2025-09-25T15:00:00"
+    FIXED_NOW_ISO: Optional[str] = None
     
     class Config:
         env_file = ".env"
