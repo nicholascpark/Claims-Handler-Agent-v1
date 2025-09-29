@@ -50,7 +50,7 @@ async def try_connect(headers, subprotocols=None):
 
     async with websockets.connect(
         ws_url,
-        additional_headers=headers,
+        extra_headers=headers,
         subprotocols=subprotocols,
         ssl=ssl_context,
         ping_interval=20,

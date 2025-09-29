@@ -450,7 +450,7 @@ class ClaimsVoiceAgent:
         headers = [("api-key", settings.AZURE_OPENAI_API_KEY or ""), ("OpenAI-Beta", "realtime=v1")]
         async with websockets.connect(
             url,
-            additional_headers=headers,
+            extra_headers=headers,
             subprotocols=["realtime"],
             ssl=self._ssl_context(),
             ping_interval=20,

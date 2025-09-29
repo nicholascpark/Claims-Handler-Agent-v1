@@ -1,0 +1,31 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	voice_input(voice_input)
+	extraction_worker(extraction_worker)
+	supervisor(supervisor)
+	submission(submission)
+	response_generator(response_generator)
+	error_handler(error_handler)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> voice_input;
+	error_handler -. &nbsp;end&nbsp; .-> __end__;
+	error_handler -.-> supervisor;
+	extraction_worker -.-> error_handler;
+	extraction_worker -.-> supervisor;
+	response_generator -. &nbsp;end&nbsp; .-> __end__;
+	supervisor -. &nbsp;end&nbsp; .-> __end__;
+	supervisor -.-> error_handler;
+	supervisor -.-> response_generator;
+	supervisor -.-> submission;
+	voice_input -.-> error_handler;
+	voice_input -.-> extraction_worker;
+	voice_input -.-> supervisor;
+	submission --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

@@ -1,22 +1,31 @@
-"""LangGraph Voice Agent Demo
+"""LangGraph Voice Agent - Optimized Implementation
 
-Graph-based supervisor workflow for a low-latency voice agent using:
-- OpenAI Realtime API (via Azure endpoint) for full-duplex audio + ASR + TTS
-- LangGraph for resilient, explicit state management of supervisor logic
-- trustcall for robust JSON-patch style extraction on a nested claim schema
+An enterprise-grade voice agent for property claims intake using:
+- OpenAI Realtime API (via Azure) for full-duplex audio + ASR + TTS
+- LangGraph for optimized multi-agent supervisor-worker architecture
+- Trustcall for robust JSON extraction with nested schema support
+- Comprehensive error handling and recovery mechanisms
 
-How this differs from src/voice_agent.py:
-- Keeps the same realtime audio loop and tool-calling pattern for stability
-- Replaces the supervisor decisioning with a LangGraph pipeline that:
-  1) Updates structured claim data with trustcall
-  2) Validates completeness
-  3) Composes the next response message
+Key Optimizations:
+✅ Proper supervisor-worker multi-agent pattern
+✅ Simplified state management with better type safety
+✅ Centralized error handling with graceful fallbacks  
+✅ Load environment variables via python-dotenv
+✅ Enhanced tool calling patterns following LangGraph best practices
+✅ Improved developer experience with better documentation
+
+Architecture:
+- Worker Agent: Handles data extraction and claim updates
+- Supervisor Agent: Makes decisions and composes responses
+- Voice Agent: Manages realtime audio and WebSocket communication
 
 Run:
-  python run_voice_agent_langgraph.py
+  python run_voice_agent_langgraph.py [--display-json] [--display-interval SECONDS]
 
-Requires Azure OpenAI Realtime credentials and audio device access.
-Reads configuration from src/config/settings.py and honors LangSmith envs.
+Requirements:
+- Azure OpenAI Realtime API credentials
+- Audio device access (microphone/speakers)
+- Configuration in .env file (loaded automatically via python-dotenv)
 """
 
 from __future__ import annotations
@@ -24,10 +33,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import ssl
 import threading
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, Union
 from datetime import datetime
 import argparse
 
@@ -45,132 +53,150 @@ from langgraph.graph import StateGraph, START, END  # type: ignore
 
 
 class SupervisorState(TypedDict, total=False):
-    """State for the supervisor LangGraph pipeline."""
-
+    """Simplified state for the supervisor LangGraph pipeline."""
+    
+    # Input data
     conversation_history: List[Dict[str, Any]]
-    relevant_context: str
-    latest_user_input: str
+    user_context: str
     claim_data: Dict[str, Any]
+    
+    # Processing results
+    updated_claim_data: Dict[str, Any]
     is_complete: bool
-    missing_fields: List[str]
-    message: str
-    error: str
+    next_message: str
+    
+    # Error handling
+    error: Optional[str]
 
 
 class LangGraphSupervisor:
-    """Supervisor implemented as a LangGraph pipeline with trustcall updates."""
+    """Optimized supervisor using LangGraph with proper multi-agent patterns."""
 
     def __init__(self) -> None:
         self.trustcall_agent: TrustcallExtractionAgent = create_trustcall_agent()
         self._graph = self._build_graph()
 
-    def _build_graph(self):
+    def _build_graph(self) -> Any:
+        """Build an optimized LangGraph following supervisor-worker pattern."""
         graph = StateGraph(SupervisorState)
 
-        async def extract_latest_user_input(state: SupervisorState) -> SupervisorState:
-            history = state.get("conversation_history", [])
-            latest_user = ""
-            for msg in reversed(history):
-                if msg.get("role") == "user" and msg.get("content"):
-                    latest_user = str(msg.get("content"))
-                    break
-            state["latest_user_input"] = latest_user
-            return state
-
-        async def trustcall_update(state: SupervisorState) -> SupervisorState:
+        # Worker node: Data extraction and updating
+        async def trustcall_worker(state: SupervisorState) -> SupervisorState:
+            """Worker agent that handles claim data extraction."""
             try:
-                latest = state.get("latest_user_input", "")
-                existing = state.get("claim_data", {})
-                context = state.get("relevant_context", "")
-                result = await self.trustcall_agent.extract_and_patch_claim_data(
-                    user_input=latest,
-                    existing_data=existing,
-                    conversation_context=context,
-                )
-                if result.extraction_successful:
-                    state["claim_data"] = result.updated_data
-                return state
-            except Exception as e:  # Never fail the flow
-                state["error"] = f"trustcall_update_failed: {e}"
-                return state
+                # Extract latest user input from conversation history
+                history = state.get("conversation_history", [])
+                user_input = ""
+                for msg in reversed(history):
+                    if msg.get("role") == "user" and msg.get("content"):
+                        user_input = str(msg.get("content"))
+                        break
 
-        async def validate_and_decide(state: SupervisorState) -> SupervisorState:
-            try:
-                current = state.get("claim_data", {})
-                validation = self.trustcall_agent.validate_extraction_completeness(current)
-                state["is_complete"] = bool(validation.get("is_complete", False))
-                state["missing_fields"] = list(validation.get("missing_fields", []))
+                # Update claim data using trustcall
+                if user_input:
+                    result = await self.trustcall_agent.extract_and_patch_claim_data(
+                        user_input=user_input,
+                        existing_data=state.get("claim_data", {}),
+                        conversation_context=state.get("user_context", ""),
+                    )
+                    
+                    if result.extraction_successful:
+                        state["updated_claim_data"] = result.updated_data
+                    else:
+                        state["updated_claim_data"] = state.get("claim_data", {})
+                        state["error"] = result.error_message
+                else:
+                    state["updated_claim_data"] = state.get("claim_data", {})
+                    
                 return state
             except Exception as e:
-                state["is_complete"] = False
-                state["missing_fields"] = ["validation_error"]
-                state["error"] = f"validate_failed: {e}"
+                state["error"] = f"Trustcall worker failed: {e}"
+                state["updated_claim_data"] = state.get("claim_data", {})
                 return state
 
-        async def compose_message(state: SupervisorState) -> SupervisorState:
+        # Supervisor node: Decision making and response composition
+        async def supervisor_decision(state: SupervisorState) -> SupervisorState:
+            """Supervisor agent that validates completeness and composes responses."""
             try:
-                context_lower = state.get("relevant_context", "").lower()
-                is_complete = bool(state.get("is_complete", False))
-
+                claim_data = state.get("updated_claim_data", {})
+                context = state.get("user_context", "").lower()
+                
+                # Validate completeness
+                validation = self.trustcall_agent.validate_extraction_completeness(claim_data)
+                is_complete = bool(validation.get("is_complete", False))
+                state["is_complete"] = is_complete
+                
+                # Compose appropriate response
                 if is_complete:
-                    state["message"] = (
+                    state["next_message"] = (
                         "Thank you for providing all that information. I have everything needed for your claim. "
                         "I'm submitting this now."
                     )
-                    return state
-
-                # Simple, empathetic prompting aligned with prompts.py style
-                if "accident" in context_lower or "incident" in context_lower or "claim" in context_lower:
-                    state["message"] = (
+                elif "accident" in context or "incident" in context or "claim" in context:
+                    state["next_message"] = (
                         "I'm sorry to hear about your situation. I'll help you get this reported. "
                         "What's your full name and the best phone number to reach you?"
                     )
-                    return state
-
-                if "coverage" in context_lower or "deductible" in context_lower:
-                    state["message"] = (
+                elif "coverage" in context or "deductible" in context:
+                    state["next_message"] = (
                         "I can help with coverage details once I have your claim information. "
                         "Let's start with what happened and your contact details."
                     )
-                    return state
-
-                state["message"] = (
-                    "I'm here to help with your claim. Can you tell me more about what happened?"
-                )
+                else:
+                    state["next_message"] = (
+                        "I'm here to help with your claim. Can you tell me more about what happened?"
+                    )
+                    
                 return state
             except Exception as e:
-                state["message"] = (
-                    "I'm having some difficulty formulating the next step. Let's continue with what happened and your contact information."
+                state["error"] = f"Supervisor decision failed: {e}"
+                state["next_message"] = (
+                    "I'm here to help with your claim. Let's start with what happened and your contact information."
                 )
-                state["error"] = f"compose_failed: {e}"
+                state["is_complete"] = False
                 return state
 
-        graph.add_node("extract_latest_user_input", extract_latest_user_input)
-        graph.add_node("trustcall_update", trustcall_update)
-        graph.add_node("validate_and_decide", validate_and_decide)
-        graph.add_node("compose_message", compose_message)
+        # Add nodes to graph
+        graph.add_node("trustcall_worker", trustcall_worker)
+        graph.add_node("supervisor_decision", supervisor_decision)
 
-        graph.add_edge(START, "extract_latest_user_input")
-        graph.add_edge("extract_latest_user_input", "trustcall_update")
-        graph.add_edge("trustcall_update", "validate_and_decide")
-        graph.add_edge("validate_and_decide", "compose_message")
-        graph.add_edge("compose_message", END)
+        # Define flow: worker processes data, then supervisor makes decisions
+        graph.add_edge(START, "trustcall_worker")
+        graph.add_edge("trustcall_worker", "supervisor_decision")
+        graph.add_edge("supervisor_decision", END)
 
         return graph.compile()
 
-    async def get_next_response(self, conversation_history: List[Dict[str, Any]], relevant_context: str, claim_data: Dict[str, Any]) -> Dict[str, Any]:
-        init: SupervisorState = {
+    async def get_next_response(
+        self, 
+        conversation_history: Optional[List[Dict[str, Any]]] = None, 
+        user_context: Optional[str] = None, 
+        claim_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Simplified interface for getting supervisor response with better type safety."""
+        initial_state: SupervisorState = {
             "conversation_history": conversation_history or [],
-            "relevant_context": relevant_context or "",
+            "user_context": user_context or "",
             "claim_data": claim_data or {},
         }
-        final_state: SupervisorState = await self._graph.ainvoke(init)
-        return {
-            "message": final_state.get("message", "I'm here to help with your claim."),
-            "is_complete": bool(final_state.get("is_complete", False)),
-            "claim_data": final_state.get("claim_data", {}),
-            "missing_fields": final_state.get("missing_fields", []),
-        }
+        
+        try:
+            final_state: SupervisorState = await self._graph.ainvoke(initial_state)
+            
+            return {
+                "message": final_state.get("next_message", "I'm here to help with your claim."),
+                "is_complete": bool(final_state.get("is_complete", False)),
+                "claim_data": final_state.get("updated_claim_data", claim_data or {}),
+                "error": final_state.get("error"),
+            }
+        except Exception as e:
+            # Fallback response on graph failure
+            return {
+                "message": "I'm here to help with your claim. Let's start with what happened.",
+                "is_complete": False,
+                "claim_data": claim_data or {},
+                "error": f"Graph execution failed: {e}",
+            }
 
 
 class LangGraphVoiceAgent:
@@ -196,11 +222,8 @@ class LangGraphVoiceAgent:
         self._greeting_sent = False
         self._listening_logged = False
         self.selected_input_device: Optional[int] = None
-        self.display_json_enabled: bool = (
-            bool(getattr(settings, "DISPLAY_CLAIM_JSON", False))
-            or os.getenv("DISPLAY_CLAIM_JSON", "").lower() == "true"
-        )
-        self.display_interval: float = float(os.getenv("DISPLAY_JSON_INTERVAL", "1.0") or 1.0)
+        self.display_json_enabled: bool = bool(getattr(settings, "DISPLAY_CLAIM_JSON", False))
+        self.display_interval: float = 1.0
         self._json_task: Optional[asyncio.Task] = None
 
         # Conversation and claim state
@@ -283,24 +306,24 @@ class LangGraphVoiceAgent:
         return base_https.replace("https://", "wss://").replace("http://", "ws://")
 
     def _ssl_context(self) -> Optional[ssl.SSLContext]:
-        if os.getenv("OPENAI_DISABLE_SSL_VERIFY", "").lower() == "true":
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            return ctx
+        # SSL verification is enabled by default for production security
         return None
 
     def _get_supervisor_tool_def(self) -> Dict[str, Any]:
+        """Define the supervisor tool with improved documentation."""
         return {
             "type": "function",
             "name": "getNextResponseFromSupervisor",
-            "description": "Determines the next response whenever the agent faces a non-trivial decision, produced by a highly intelligent supervisor agent.",
+            "description": (
+                "Consult the expert supervisor to determine the next response for complex decisions. "
+                "The supervisor analyzes conversation context and claim data to provide appropriate guidance."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "relevantContextFromLastUserMessage": {
                         "type": "string",
-                        "description": "Key information from the user described in their most recent message."
+                        "description": "Key information or context from the user's most recent message that needs analysis."
                     }
                 },
                 "required": ["relevantContextFromLastUserMessage"],
@@ -330,8 +353,12 @@ class LangGraphVoiceAgent:
         }
 
     async def _send(self, event: Dict[str, Any]) -> None:
-        if self.ws:
-            await self.ws.send(json.dumps(event))
+        """Send event with error handling."""
+        try:
+            if self.ws and not self.ws.closed:
+                await self.ws.send(json.dumps(event))
+        except Exception as e:
+            print(f"⚠️ WebSocket send failed: {e}")
 
     async def _session_update(self) -> None:
         await self._send({
@@ -411,55 +438,102 @@ class LangGraphVoiceAgent:
             pass
 
     def _append_conversation(self, role: str, content: str) -> None:
-        if not content:
-            return
-        self.conversation_history.append({"type": "message", "role": role, "content": content})
+        """Safely append conversation history with error handling."""
+        try:
+            if not content or not content.strip():
+                return
+            self.conversation_history.append({
+                "type": "message", 
+                "role": role, 
+                "content": content.strip()
+            })
+            # Limit conversation history size for memory management
+            max_history = getattr(settings, "MAX_CONVERSATION_HISTORY", 50)
+            if len(self.conversation_history) > max_history:
+                self.conversation_history = self.conversation_history[-max_history:]
+        except Exception as e:
+            print(f"⚠️ Failed to append conversation: {e}")
 
     async def _handle_function_call(self, function_call: Dict[str, Any]) -> None:
-        name = (function_call or {}).get("name")
-        if name != "getNextResponseFromSupervisor":
-            return
-        args_str = (function_call or {}).get("arguments", "{}")
+        """Handle function calls with comprehensive error recovery."""
         try:
-            args = json.loads(args_str)
-        except Exception:
-            args = {}
-        relevant = args.get("relevantContextFromLastUserMessage", "")
+            name = (function_call or {}).get("name")
+            if name != "getNextResponseFromSupervisor":
+                return
 
-        result = await self.supervisor.get_next_response(
-            conversation_history=[
-                {"role": m.get("role", "user"), "content": m.get("content", "")}
-                for m in self.conversation_history if m.get("type") == "message"
-            ],
-            relevant_context=relevant,
-            claim_data=self.current_claim_data,
-        )
+            # Parse arguments safely
+            args_str = (function_call or {}).get("arguments", "{}")
+            try:
+                args = json.loads(args_str)
+            except json.JSONDecodeError:
+                print("⚠️ Invalid JSON in function call arguments")
+                args = {}
 
-        # Update claim data and print diffs if enabled
-        previous_data = json.loads(json.dumps(self.current_claim_data))
-        self.current_claim_data = result.get("claim_data", self.current_claim_data)
-        if self.display_json_enabled:
-            self._print_field_updates(previous_data, self.current_claim_data)
-            # Prevent duplicate prints by aligning last-print snapshot
-            self._last_claim_print = json.dumps(self.current_claim_data, sort_keys=True, ensure_ascii=False)
+            relevant = args.get("relevantContextFromLastUserMessage", "")
 
-        # Create tool output for the Realtime API
-        call_id = (function_call or {}).get("id", "")
-        tool_output_event = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": result.get("message", "I'm here to help with your claim. How can I assist you?"),
-            },
-        }
-        await self._send(tool_output_event)
+            # Get supervisor response with error handling
+            result = await self.supervisor.get_next_response(
+                conversation_history=[
+                    {"role": m.get("role", "user"), "content": m.get("content", "")}
+                    for m in self.conversation_history if m.get("type") == "message"
+                ],
+                user_context=relevant,
+                claim_data=self.current_claim_data,
+            )
 
-        # Trigger the assistant to speak the tool output message
-        await self._send({"type": "response.create"})
+            # Handle supervisor errors
+            if result.get("error"):
+                print(f"⚠️ Supervisor error: {result['error']}")
 
-        # Record assistant message in history
-        self._append_conversation("assistant", result.get("message", ""))
+            # Update claim data safely
+            try:
+                previous_data = json.loads(json.dumps(self.current_claim_data))
+                self.current_claim_data = result.get("claim_data", self.current_claim_data)
+                if self.display_json_enabled:
+                    self._print_field_updates(previous_data, self.current_claim_data)
+                    self._last_claim_print = json.dumps(self.current_claim_data, sort_keys=True, ensure_ascii=False)
+            except Exception as e:
+                print(f"⚠️ Failed to update claim data: {e}")
+
+            # Send response to Realtime API
+            call_id = (function_call or {}).get("id", "")
+            message_content = result.get("message", "I'm here to help with your claim. How can I assist you?")
+            
+            await self._send_tool_response(call_id, message_content)
+            
+            # Record assistant message in history
+            self._append_conversation("assistant", message_content)
+
+        except Exception as e:
+            # Last resort fallback
+            print(f"❌ Function call handler failed: {e}")
+            await self._send_fallback_response(function_call)
+
+    async def _send_tool_response(self, call_id: str, message: str) -> None:
+        """Send tool response with error handling."""
+        try:
+            tool_output_event = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": message,
+                },
+            }
+            await self._send(tool_output_event)
+            await self._send({"type": "response.create"})
+        except Exception as e:
+            print(f"⚠️ Failed to send tool response: {e}")
+
+    async def _send_fallback_response(self, function_call: Dict[str, Any]) -> None:
+        """Send a fallback response when function call handling fails."""
+        try:
+            call_id = (function_call or {}).get("id", "")
+            fallback_message = "I'm here to help with your claim. Could you please tell me what happened?"
+            await self._send_tool_response(call_id, fallback_message)
+            self._append_conversation("assistant", fallback_message)
+        except Exception as e:
+            print(f"❌ Fallback response failed: {e}")
 
     async def _event_loop(self) -> None:
         while not self._closing and self.ws:
@@ -526,11 +600,11 @@ class LangGraphVoiceAgent:
                     if text:
                         print(f"[{self._get_timestamp()}] 👤 User: {text}")
                         self._append_conversation("user", text)
-                        # Kick off background trustcall update so JSON and diffs reflect progress
+                        # Kick off background trustcall update for real-time JSON display
                         try:
-                            asyncio.create_task(self._apply_trustcall_from_user_text(text))
-                        except Exception:
-                            pass
+                            asyncio.create_task(self._background_trustcall_update(text))
+                        except Exception as e:
+                            print(f"⚠️ Failed to start background update: {e}")
 
                 elif etype == "input_audio_buffer.speech_stopped":
                     try:
@@ -628,14 +702,35 @@ class LangGraphVoiceAgent:
                     pass
                 await asyncio.sleep(max(0.2, float(self.display_interval)))
         except asyncio.CancelledError:
-            return
+            pass
+
+    async def _background_trustcall_update(self, user_text: str) -> None:
+        """Background task to update claim data for real-time display."""
+        try:
+            result = await self.supervisor.trustcall_agent.extract_and_patch_claim_data(
+                user_input=user_text,
+                existing_data=self.current_claim_data,
+                conversation_context="Background update",
+            )
+            
+            if result.extraction_successful:
+                previous_data = json.loads(json.dumps(self.current_claim_data))
+                self.current_claim_data = result.updated_data
+                
+                if self.display_json_enabled:
+                    self._print_field_updates(previous_data, self.current_claim_data)
+                    self._last_claim_print = json.dumps(self.current_claim_data, sort_keys=True, ensure_ascii=False)
+                    
+        except Exception as e:
+            # Silent fail for background updates to avoid UI noise
+            pass
 
     async def start(self) -> None:
         url = self._build_ws_url()
         headers = [("api-key", settings.AZURE_OPENAI_API_KEY or ""), ("OpenAI-Beta", "realtime=v1")]
         async with websockets.connect(
             url,
-            additional_headers=headers,
+            extra_headers=headers,
             subprotocols=["realtime"],
             ssl=self._ssl_context(),
             ping_interval=20,
@@ -655,21 +750,19 @@ class LangGraphVoiceAgent:
             finally:
                 self._closing = True
                 self._close_output_stream()
-                for t in (mic, events, self._json_task):
-                    if t and not t.done():
-                        t.cancel()
+                for task in (mic, events, self._json_task):
+                    if task and not task.done():
+                        task.cancel()
 
 
-def _wire_langsmith_envs() -> None:
+def _ensure_langsmith_envs() -> None:
+    """Ensure LangSmith environment variables are set for tracing."""
     try:
-        if settings.LANGSMITH_PROJECT:
-            os.environ["LANGSMITH_PROJECT"] = settings.LANGSMITH_PROJECT
-        if settings.LANGSMITH_ENDPOINT:
-            os.environ["LANGSMITH_ENDPOINT"] = settings.LANGSMITH_ENDPOINT
-        if settings.LANGCHAIN_TRACING:
-            os.environ["LANGCHAIN_TRACING"] = settings.LANGCHAIN_TRACING
-        if settings.LANGSMITH_API_KEY:
-            os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+        # Environment variables are now loaded via load_dotenv in settings.py
+        # This function just validates they're available if needed
+        if settings.LANGCHAIN_TRACING and settings.LANGCHAIN_TRACING.lower() == "true":
+            if not settings.LANGSMITH_API_KEY:
+                print("⚠️  Warning: LANGCHAIN_TRACING enabled but LANGSMITH_API_KEY not set")
     except Exception:
         pass
 
@@ -681,7 +774,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     validate_required_settings()
-    _wire_langsmith_envs()
+    _ensure_langsmith_envs()
     agent = LangGraphVoiceAgent()
     if args.display_json:
         agent.display_json_enabled = True

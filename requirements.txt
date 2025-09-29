@@ -8,10 +8,10 @@ pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 
 # REQUIRED: Trustcall and LangChain for JSON extraction (NO FALLBACKS)
-trustcall>=0.2.0
-langchain-openai>=0.1.0
-langchain-core>=0.2.0
-langgraph>=0.2.0
+trustcall
+langchain-openai
+langchain-core
+langgraph
 
 # Location services (preserved from original)
 pgeocode
@@ -25,6 +25,10 @@ websockets>=12.0
 pyaudio>=0.2.11
 numpy>=2.0.0
 sounddevice>=0.4.6
+
+# Graph Visualization
+Pillow>=10.0.0
+pyppeteer>=1.0.0
 
 # Development and testing
 pytest
