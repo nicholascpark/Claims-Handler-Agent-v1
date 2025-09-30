@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_CHAT_API_VERSION=${AZURE_OPENAI_CHAT_API_VERSION}
+      - AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=${AZURE_OPENAI_CHAT_DEPLOYMENT_NAME}
+      - AZURE_OPENAI_REALTIME_API_VERSION=${AZURE_OPENAI_REALTIME_API_VERSION}
+      - AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME=${AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME}
+      - COMPANY_NAME=${COMPANY_NAME:-Intact Specialty Insurance}
+      - COMPANY_DEPARTMENT=${COMPANY_DEPARTMENT:-Claims Department}
+      - AGENT_NAME=${AGENT_NAME:-IntactBot}
+      - JUNIOR_AGENT_VOICE=${JUNIOR_AGENT_VOICE:-shimmer}
+    env_file:
+      - .env
+    volumes:
+      - ./voice_langgraph:/app/voice_langgraph:ro
+    networks:
+      - fnol-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      - VITE_WS_URL=ws://backend:8000/ws/voice
+    networks:
+      - fnol-network
+    restart: unless-stopped
+
+networks:
+  fnol-network:
+    driver: bridge

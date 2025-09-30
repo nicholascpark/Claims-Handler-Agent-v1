@@ -1,0 +1,35 @@
+# Backend Dependencies for FNOL Voice Agent
+# Python 3.11+
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+python-multipart>=0.0.6
+
+# AI and LangGraph
+openai>=1.0.0
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+langgraph>=0.1.0
+trustcall>=0.0.39
+
+# Schema and Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# Audio Processing
+numpy>=1.24.0
+sounddevice>=0.4.6
+
+# Time and Location
+pytz>=2023.3
+pgeocode
+pandas
+
+# Async HTTP
+aiohttp>=3.9.0
+
+# CORS
+starlette>=0.27.0

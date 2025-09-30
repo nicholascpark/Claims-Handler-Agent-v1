@@ -10,11 +10,8 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
 
-# Import main settings for Azure OpenAI configuration
-from src.config.settings import settings as main_settings
-
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file in project root
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 
 class VoiceAgentSettings(BaseSettings):
@@ -84,30 +81,43 @@ class VoiceAgentSettings(BaseSettings):
         description="Language for transcription"
     )
     
-    # Azure OpenAI Settings (inherited from main settings)
-    @property
-    def AZURE_OPENAI_ENDPOINT(self) -> Optional[str]:
-        return main_settings.AZURE_OPENAI_ENDPOINT
+    # Azure OpenAI Settings (from environment variables)
+    # These MUST be set in .env file - no defaults provided for security
+    AZURE_OPENAI_ENDPOINT: Optional[str] = Field(
+        default=None,
+        description="Azure OpenAI endpoint URL",
+        env="AZURE_OPENAI_ENDPOINT"
+    )
     
-    @property
-    def AZURE_OPENAI_API_KEY(self) -> Optional[str]:
-        return main_settings.AZURE_OPENAI_API_KEY
+    AZURE_OPENAI_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Azure OpenAI API key",
+        env="AZURE_OPENAI_API_KEY"
+    )
     
-    @property
-    def AZURE_OPENAI_CHAT_API_VERSION(self) -> Optional[str]:
-        return main_settings.AZURE_OPENAI_CHAT_API_VERSION
+    AZURE_OPENAI_CHAT_API_VERSION: str = Field(
+        default="2024-08-01-preview",
+        description="Azure OpenAI Chat API version",
+        env="AZURE_OPENAI_CHAT_API_VERSION"
+    )
     
-    @property
-    def AZURE_OPENAI_CHAT_DEPLOYMENT_NAME(self) -> Optional[str]:
-        return main_settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+    AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: Optional[str] = Field(
+        default=None,
+        description="Azure OpenAI Chat deployment name",
+        env="AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+    )
     
-    @property
-    def AZURE_OPENAI_REALTIME_API_VERSION(self) -> Optional[str]:
-        return main_settings.AZURE_OPENAI_REALTIME_API_VERSION
+    AZURE_OPENAI_REALTIME_API_VERSION: str = Field(
+        default="2024-10-01-preview",
+        description="Azure OpenAI Realtime API version",
+        env="AZURE_OPENAI_REALTIME_API_VERSION"
+    )
     
-    @property
-    def AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME(self) -> Optional[str]:
-        return main_settings.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME
+    AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME: Optional[str] = Field(
+        default=None,
+        description="Azure OpenAI Realtime deployment name",
+        env="AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME"
+    )
     
     # Conversation Settings
     MAX_CONVERSATION_HISTORY: int = Field(
@@ -144,9 +154,10 @@ class VoiceAgentSettings(BaseSettings):
     )
     
     class Config:
-        env_file = ".env"
+        # Look for .env in project root (parent directory)
+        env_file = os.path.join(os.path.dirname(__file__), '..', '.env')
         env_file_encoding = "utf-8"
-        case_sensitive = True
+        case_sensitive = False  # Allow lowercase in .env (e.g., azure_openai_endpoint)
         extra = "allow"  # Allow extra environment variables
 
 
@@ -194,6 +205,17 @@ IMPORTANT INSTRUCTIONS:
 
 def validate_voice_settings():
     """Validate that required voice agent settings are present."""
-    # Use the main settings validation since we inherit from it
-    from src.config.settings import validate_required_settings
-    validate_required_settings()
+    required_settings = [
+        ("AZURE_OPENAI_ENDPOINT", voice_settings.AZURE_OPENAI_ENDPOINT),
+        ("AZURE_OPENAI_API_KEY", voice_settings.AZURE_OPENAI_API_KEY),
+        ("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", voice_settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME),
+        ("AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME", voice_settings.AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME),
+    ]
+    
+    missing = [name for name, value in required_settings if not value]
+    
+    if missing:
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(missing)}\n"
+            f"Please set these in your .env file in the project root."
+        )
