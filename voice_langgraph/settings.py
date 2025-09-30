@@ -121,6 +121,12 @@ class VoiceAgentSettings(BaseSettings):
         description="Whether to display claim JSON by default"
     )
     
+    # Speech Orchestration
+    REALTIME_AS_TALKER: bool = Field(
+        default=True,
+        description="If true, let the Realtime model speak autonomously for lowest latency. The workflow will not send assistant speech."
+    )
+    
     # Workflow Settings
     EXTRACTION_KEYWORDS: list[str] = Field(
         default=[
@@ -175,7 +181,15 @@ IMPORTANT INSTRUCTIONS:
 
 2. Be conversational but efficient - acknowledge what they tell you and guide them to provide necessary information.
 
-3. When the claim is complete, thank them and let them know their claim will be processed."""
+3. Do NOT request photos, images, documents, or uploads. Only ask for information that can be verbally provided.
+
+4. Use the caller's actual name if available, and speak directly to them using "you".
+
+5. Focus on collecting: specific incident date, specific time, specific location, property type, areas damaged, description, and severity.
+
+6. If any of these are missing, ask concise follow-ups to fill the gaps.
+
+7. When the claim is complete, thank them and let them know their claim will be processed."""
 
 
 def validate_voice_settings():
