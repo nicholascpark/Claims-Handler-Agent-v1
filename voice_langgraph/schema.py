@@ -54,33 +54,33 @@ class PropertyClaim(BaseModel):
     def is_complete(self) -> bool:
         """Check if all essential intake fields are populated (claim_id not required for new claims)."""
         try:
+            # Helper to check if value is valid (not empty and not a placeholder)
+            def is_valid_value(value: str) -> bool:
+                if not value or not str(value).strip():
+                    return False
+                value_lower = str(value).lower().strip()
+                # Reject placeholder values
+                placeholders = ['unspecified', 'unknown', 'not provided', 'n/a', 'none', 'tbd', 'to be determined']
+                return not any(placeholder in value_lower for placeholder in placeholders)
+            
             # Check claimant required fields
-            if not (self.claimant.insured_name and 
-                   str(self.claimant.insured_name).strip() and
-                   self.claimant.insured_phone and 
-                   str(self.claimant.insured_phone).strip()):
+            if not (is_valid_value(self.claimant.insured_name) and
+                   is_valid_value(self.claimant.insured_phone)):
                 return False
             
             # Check incident required fields
-            if not (self.incident.incident_date and 
-                   str(self.incident.incident_date).strip() and
-                   self.incident.incident_time and 
-                   str(self.incident.incident_time).strip() and
-                   self.incident.incident_location and 
-                   str(self.incident.incident_location).strip() and
-                   self.incident.incident_description and 
-                   str(self.incident.incident_description).strip()):
+            if not (is_valid_value(self.incident.incident_date) and
+                   is_valid_value(self.incident.incident_time) and
+                   is_valid_value(self.incident.incident_location) and
+                   is_valid_value(self.incident.incident_description)):
                 return False
             
             # Check property damage required fields
-            if not (self.property_damage.property_type and 
-                   str(self.property_damage.property_type).strip() and
+            if not (is_valid_value(self.property_damage.property_type) and
                    self.property_damage.points_of_impact and 
                    len(self.property_damage.points_of_impact) > 0 and
-                   self.property_damage.damage_description and 
-                   str(self.property_damage.damage_description).strip() and
-                   self.property_damage.estimated_damage_severity and 
-                   str(self.property_damage.estimated_damage_severity).strip()):
+                   is_valid_value(self.property_damage.damage_description) and
+                   is_valid_value(self.property_damage.estimated_damage_severity)):
                 return False
             
             return True
@@ -91,31 +91,40 @@ class PropertyClaim(BaseModel):
         """Get list of missing required intake fields (claim_id not required for new claims)."""
         missing = []
         
+        # Helper to check if value is valid (not empty and not a placeholder)
+        def is_valid_value(value: str) -> bool:
+            if not value or not str(value).strip():
+                return False
+            value_lower = str(value).lower().strip()
+            # Reject placeholder values
+            placeholders = ['unspecified', 'unknown', 'not provided', 'n/a', 'none', 'tbd', 'to be determined']
+            return not any(placeholder in value_lower for placeholder in placeholders)
+        
         try:
             # Check claimant fields
-            if not self.claimant.insured_name or not str(self.claimant.insured_name).strip():
+            if not is_valid_value(self.claimant.insured_name):
                 missing.append('claimant.insured_name')
-            if not self.claimant.insured_phone or not str(self.claimant.insured_phone).strip():
+            if not is_valid_value(self.claimant.insured_phone):
                 missing.append('claimant.insured_phone')
             
             # Check incident fields
-            if not self.incident.incident_date or not str(self.incident.incident_date).strip():
+            if not is_valid_value(self.incident.incident_date):
                 missing.append('incident.incident_date')
-            if not self.incident.incident_time or not str(self.incident.incident_time).strip():
+            if not is_valid_value(self.incident.incident_time):
                 missing.append('incident.incident_time')
-            if not self.incident.incident_location or not str(self.incident.incident_location).strip():
+            if not is_valid_value(self.incident.incident_location):
                 missing.append('incident.incident_location')
-            if not self.incident.incident_description or not str(self.incident.incident_description).strip():
+            if not is_valid_value(self.incident.incident_description):
                 missing.append('incident.incident_description')
             
             # Check property damage fields
-            if not self.property_damage.property_type or not str(self.property_damage.property_type).strip():
+            if not is_valid_value(self.property_damage.property_type):
                 missing.append('property_damage.property_type')
             if not self.property_damage.points_of_impact or len(self.property_damage.points_of_impact) == 0:
                 missing.append('property_damage.points_of_impact')
-            if not self.property_damage.damage_description or not str(self.property_damage.damage_description).strip():
+            if not is_valid_value(self.property_damage.damage_description):
                 missing.append('property_damage.damage_description')
-            if not self.property_damage.estimated_damage_severity or not str(self.property_damage.estimated_damage_severity).strip():
+            if not is_valid_value(self.property_damage.estimated_damage_severity):
                 missing.append('property_damage.estimated_damage_severity')
             
         except Exception:

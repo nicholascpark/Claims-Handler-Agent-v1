@@ -108,17 +108,25 @@ async def extraction_worker_node(state: VoiceAgentState) -> VoiceAgentState:
             {
                 "role": "user",
                 "content": f"""Extract property claim information from this conversation.
-                
+
+CRITICAL EXTRACTION RULES:
+1. ONLY extract information explicitly stated by the user
+2. DO NOT infer dates/times from the current session time - leave empty if not mentioned
+3. DO NOT create placeholder values like "unspecified" or "unknown" - leave empty instead
+4. DO NOT fill in fields based on assumptions - only use actual user statements
+5. For location, ONLY extract if user provides a specific place - never use placeholders
+
 Context:
 {conversation_context}
 
 Current user message: {user_input}
 
-Extract all relevant claim fields. For nested structures, extract into:
+Extract ONLY what the user explicitly mentioned into these structures:
 - claimant: insured_name, insured_phone, policy_number
-- incident: incident_date, incident_time, incident_location, incident_description
+- incident: incident_date (YYYY-MM-DD, only if stated), incident_time (HH:MM, only if stated), incident_location (specific place only), incident_description
 - property_damage: property_type, points_of_impact, damage_description, estimated_damage_severity, additional_details
-"""
+
+If a field is not mentioned, leave it empty or null."""
             }
         ]
         
@@ -192,6 +200,14 @@ Recent conversation:
 {json.dumps(recent_history, indent=2)}
 
 User's last message: {state.get('current_user_message', '')}
+
+IMPORTANT GUIDELINES FOR YOUR RESPONSE:
+1. If the user just described an incident but didn't provide date/time/location, ask for these specifics
+2. If location has placeholder values or is vague, ask for the specific location
+3. If date/time are missing, ask when exactly the incident occurred
+4. DO NOT ask about photos, documents, or anything that can't be verbally provided
+5. Use the caller's actual name if available, never use "[Caller's Name]" or similar placeholders
+6. Keep responses natural and empathetic
 
 Based on this information, provide:
 1. A natural, conversational response for the voice agent to speak

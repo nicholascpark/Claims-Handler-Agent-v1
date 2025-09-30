@@ -173,16 +173,9 @@ Your primary goal is to collect claim information naturally through conversation
 IMPORTANT INSTRUCTIONS:
 1. Start EVERY conversation by greeting: "{get_company_greeting()}"
 
-2. For EVERY user message, you MUST use the 'consultSupervisor' tool to:
-   - Get guidance on what information to collect next
-   - Ensure claim data is being properly extracted
-   - Receive the appropriate response to give the user
+2. Be conversational but efficient - acknowledge what they tell you and guide them to provide necessary information.
 
-3. Be conversational but efficient - acknowledge what they tell you and guide them to provide necessary information.
-
-4. When the supervisor indicates the claim is complete, thank them and let them know their claim will be processed.
-
-Remember: ALWAYS consult the supervisor for every response - they handle the data extraction and guide the conversation flow."""
+3. When the claim is complete, thank them and let them know their claim will be processed."""
 
 
 def validate_voice_settings():

@@ -57,6 +57,10 @@ class VoiceAgent:
         self.current_timezone: str = "America/Toronto"  # Default timezone
         self._greeting_sent = False
         self._is_running = False
+        # Response coordination flags to avoid double speaking
+        self._awaiting_our_response = False  # True right after we send response.create
+        self._current_our_response_id: Optional[str] = None
+        self._suppress_server_autoreply = True  # Cancel server auto replies when LangGraph drives responses
         
     def _build_ws_url(self) -> str:
         """Build WebSocket URL for Azure OpenAI Realtime API."""
@@ -132,7 +136,14 @@ class VoiceAgent:
             })
             
             # Trigger response generation
-            await self.ws_manager.send({"type": "response.create"})
+            await self.ws_manager.send({
+                "type": "response.create",
+                "response": {
+                    "tool_choice": "none"
+                }
+            })
+            # The next response.created should be ours
+            self._awaiting_our_response = True
             
             # Check if claim is complete
             if result.get("is_claim_complete"):
@@ -161,6 +172,7 @@ class VoiceAgent:
                 },
             })
             await self.ws_manager.send({"type": "response.create"})
+            self._awaiting_our_response = True
             
     async def _handle_websocket_event(self, event: Dict[str, Any]):
         """Handle incoming WebSocket events."""
@@ -180,12 +192,29 @@ class VoiceAgent:
                     "type": "response.create",
                     "response": {
                         "instructions": self.instructions + "\n\nStart with the greeting immediately.",
-                        "tool_choice": "auto",
+                        "tool_choice": "none"
                     },
                 })
+                # The next response.created should be ours
+                self._awaiting_our_response = True
                 self._greeting_sent = True
                 print(f"[{get_timestamp()}] 🎙️ AI listening...")
-                
+        
+        elif event_type == "response.created":
+            # Cancel server auto-generated responses unless initiated by us
+            response = event.get("response", {}) or {}
+            response_id = response.get("id") or event.get("id")
+            if self._awaiting_our_response:
+                # Mark this response as ours and clear the awaiting flag
+                self._current_our_response_id = response_id
+                self._awaiting_our_response = False
+            else:
+                if self._suppress_server_autoreply and response_id:
+                    await self.ws_manager.send({
+                        "type": "response.cancel",
+                        "response_id": response_id
+                    })
+            
         elif event_type == "response.audio.delta":
             # Handle audio playback
             audio_b64 = event.get("delta", "") or event.get("audio", "")
