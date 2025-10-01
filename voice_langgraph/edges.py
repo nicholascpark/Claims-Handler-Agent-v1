@@ -5,7 +5,6 @@ Uses PropertyClaim.is_complete() to trigger submission_node routing.
 """
 
 from typing import Literal
-from langgraph.graph import END
 from .state import VoiceAgentState
 from .schema import PropertyClaim
 
@@ -40,40 +39,27 @@ def route_after_extraction(state: VoiceAgentState) -> Literal["supervisor", "err
     return "supervisor"
 
 
-def route_after_supervisor(state: VoiceAgentState) -> Literal["submission", "response_generator", "end", "error_handler"]:
+def route_after_supervisor(state: VoiceAgentState) -> Literal["submission", "get_human_representative", "end", "error_handler"]:
     """Route after supervisor makes decision.
-    
+
     Determines whether to:
     - Submit claim (if complete)
-    - Generate a response (if not already provided)
-    - Complete the workflow
+    - Escalate to human representative (if requested)
+    - End the workflow (continue conversation on next user input)
     - Handle an error
     """
     if state.get("error"):
         return "error_handler"
-    
+
     next_action = state.get("next_action", "respond")
-    
+
     if next_action == "submit":
         return "submission"
-    elif next_action == "complete":
-        return "end"
     elif next_action == "escalate":
-        return "end"  # End workflow for escalation
+        return "get_human_representative"
     else:
-        # Check if supervisor already provided a message
-        if state.get("last_assistant_message"):
-            return "end"
-        else:
-            return "response_generator"
-
-
-def route_after_response(state: VoiceAgentState) -> Literal["end"]:
-    """Route after response generation.
-    
-    Always end the workflow after generating response.
-    """
-    return "end"
+        # Supervisor has emitted message via add_messages; end this turn
+        return "end"
 
 
 def route_after_error(state: VoiceAgentState) -> Literal["end", "supervisor"]:
@@ -118,15 +104,3 @@ def should_continue_conversation(state: VoiceAgentState) -> bool:
     return True
 
 
-def format_state_for_response(state: VoiceAgentState) -> dict:
-    """Format the final state for response to the voice handler.
-    
-    Extracts only the necessary fields for the WebSocket response.
-    """
-    return {
-        "message": state.get("last_assistant_message", ""),
-        "is_complete": state.get("is_claim_complete", False),
-        "claim_data": state.get("claim_data", {}),
-        "should_escalate": state.get("next_action") == "escalate",
-        "error": state.get("error")
-    }

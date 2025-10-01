@@ -4,6 +4,7 @@ import CallAgentButton from './components/CallAgentButton'
 import ChatHistory from './components/ChatHistory'
 import JsonPayloadDisplay from './components/JsonPayloadDisplay'
 import StatusIndicator from './components/StatusIndicator'
+import MicrophoneSelector from './components/MicrophoneSelector'
 import { useVoiceAgent } from './hooks/useVoiceAgent'
 
 function App() {
@@ -19,6 +20,13 @@ function App() {
     error,
     startSession,
     stopSession,
+    microphones,
+    selectedDeviceId,
+    setSelectedDeviceId,
+    refreshAudioDevices,
+    isEnumeratingDevices,
+    permissionsGranted,
+    requestDevicePermission,
   } = useVoiceAgent()
 
   return (
@@ -45,8 +53,18 @@ function App() {
           </button>
         </div>
 
-        {/* Call Agent Button */}
-        <div className="flex justify-center">
+        {/* Microphone selector + Call Agent Button */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <MicrophoneSelector
+            microphones={microphones}
+            selectedDeviceId={selectedDeviceId}
+            onChange={setSelectedDeviceId}
+            onRefresh={() => refreshAudioDevices(false)}
+            isEnumerating={isEnumeratingDevices}
+            isDisabled={isSessionActive}
+            permissionsGranted={permissionsGranted}
+            requestPermission={requestDevicePermission}
+          />
           <CallAgentButton
             isSessionActive={isSessionActive}
             onStart={startSession}

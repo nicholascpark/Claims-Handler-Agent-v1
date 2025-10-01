@@ -9,7 +9,7 @@ graph TD;
 	extraction_worker(extraction_worker)
 	supervisor(supervisor)
 	submission(submission)
-	response_generator(response_generator)
+	get_human_representative(get_human_representative)
 	error_handler(error_handler)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> voice_input;
@@ -17,10 +17,10 @@ graph TD;
 	error_handler -.-> supervisor;
 	extraction_worker -.-> error_handler;
 	extraction_worker -.-> supervisor;
-	response_generator -. &nbsp;end&nbsp; .-> __end__;
+	get_human_representative -. &nbsp;end&nbsp; .-> __end__;
 	supervisor -. &nbsp;end&nbsp; .-> __end__;
 	supervisor -.-> error_handler;
-	supervisor -.-> response_generator;
+	supervisor -.-> get_human_representative;
 	supervisor -.-> submission;
 	voice_input -.-> error_handler;
 	voice_input -.-> extraction_worker;

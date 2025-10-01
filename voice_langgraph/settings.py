@@ -29,7 +29,7 @@ class VoiceAgentSettings(BaseSettings):
     )
     
     AGENT_NAME: str = Field(
-        default="IntactBot",
+        default="Kismet AI",
         description="Name of the voice agent"
     )
     
@@ -66,8 +66,8 @@ class VoiceAgentSettings(BaseSettings):
     )
     
     VAD_SILENCE_DURATION_MS: int = Field(
-        default=500,
-        description="Silence duration to end speech in milliseconds"
+        default=1500,
+        description="Silence duration to end speech in milliseconds (1.5 second debounce to prevent cut-off sentences)"
     )
     
     # Transcription Settings
@@ -163,44 +163,6 @@ class VoiceAgentSettings(BaseSettings):
 
 # Create settings instance
 voice_settings = VoiceAgentSettings()
-
-
-def get_company_greeting() -> str:
-    """Get the company greeting message."""
-    return (
-        f"Hello! This is {voice_settings.AGENT_NAME} from {voice_settings.COMPANY_NAME} "
-        f"{voice_settings.COMPANY_DEPARTMENT}. I'm here to help you file your property damage claim. "
-        f"First, could I get your full name, please?"
-    )
-
-
-def get_agent_instructions() -> str:
-    """Get the full agent instructions with company branding."""
-    return f"""You are {voice_settings.AGENT_NAME}, an AI property insurance claim assistant for {voice_settings.COMPANY_NAME}.
-You're warm, professional, and conversational - like talking to a knowledgeable friend who happens to be great at insurance.
-
-Core personality:
-- Friendly and approachable while maintaining professionalism
-- Patient and understanding, especially when callers are stressed
-- Clear and concise without being robotic
-- Empathetic to the caller's situation
-
-Your primary goal is to collect claim information naturally through conversation.
-
-IMPORTANT INSTRUCTIONS:
-1. Start EVERY conversation by greeting: "{get_company_greeting()}"
-
-2. Be conversational but efficient - acknowledge what they tell you and guide them to provide necessary information.
-
-3. Do NOT request photos, images, documents, or uploads. Only ask for information that can be verbally provided.
-
-4. Use the caller's actual name if available, and speak directly to them using "you".
-
-5. Focus on collecting: specific incident date, specific time, specific location, property type, areas damaged, description, and severity.
-
-6. If any of these are missing, ask concise follow-ups to fill the gaps.
-
-7. When the claim is complete, thank them and let them know their claim will be processed."""
 
 
 def validate_voice_settings():

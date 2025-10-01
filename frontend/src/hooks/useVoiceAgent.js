@@ -11,6 +11,14 @@ export function useVoiceAgent() {
   const [isClaimComplete, setIsClaimComplete] = useState(false)
   const [agentStatus, setAgentStatus] = useState('Initializing...')
   const [error, setError] = useState(null)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+
+  // Microphone device management
+  const [microphones, setMicrophones] = useState([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState('')
+  const [isEnumeratingDevices, setIsEnumeratingDevices] = useState(false)
+  const [permissionsGranted, setPermissionsGranted] = useState(false)
+  const [autoPermissionPrompted, setAutoPermissionPrompted] = useState(false)
 
   const wsRef = useRef(null)
   const audioContextRef = useRef(null)
@@ -19,31 +27,97 @@ export function useVoiceAgent() {
   const mediaStreamRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
 
+  // Enumerate available input devices
+  const refreshAudioDevices = useCallback(async (requestPermission = false) => {
+    try {
+      setIsEnumeratingDevices(true)
+      // Optionally request permission to reveal device labels
+      if (requestPermission) {
+        try {
+          const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          setPermissionsGranted(true)
+          tempStream.getTracks().forEach(t => t.stop())
+        } catch (permErr) {
+          // Do not surface as a blocking error here; user can still pick default device
+          console.warn('Microphone permission not granted (labels may be hidden):', permErr)
+        }
+      }
+
+      const allDevices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = allDevices.filter(d => d.kind === 'audioinput')
+      setMicrophones(inputs)
+
+      // Initialize a default selection if none selected yet
+      if (!selectedDeviceId && inputs.length > 0) {
+        const preferred = inputs.find(d => d.deviceId === 'default') || inputs[0]
+        setSelectedDeviceId(preferred.deviceId)
+      }
+    } catch (err) {
+      console.error('Failed to enumerate devices:', err)
+    } finally {
+      setIsEnumeratingDevices(false)
+    }
+  }, [selectedDeviceId])
+
+  const requestDevicePermission = useCallback(async () => {
+    try {
+      const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      setPermissionsGranted(true)
+      tempStream.getTracks().forEach(t => t.stop())
+      await refreshAudioDevices(false)
+    } catch (err) {
+      console.error('Permission request failed:', err)
+      setError('Microphone permission denied. Device names may be hidden.')
+    }
+  }, [refreshAudioDevices])
+
   // Initialize audio context and worklets
   const initializeAudio = useCallback(async () => {
     try {
       // Create audio context for playback
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 24000
+        sampleRate: 24000,
+        latencyHint: 'interactive'
       })
       audioContextRef.current = audioContext
+      
+      // Ensure audio context is running
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume()
+      }
 
       // Load playback worklet
       await audioContext.audioWorklet.addModule('/audio-playback-worklet.js')
       const playbackNode = new AudioWorkletNode(audioContext, 'audio-playback-worklet')
       playbackNode.connect(audioContext.destination)
       playbackWorkletRef.current = playbackNode
+      
+      console.log('Audio context initialized, state:', audioContext.state)
 
-      // Get microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          channelCount: 1,
-          sampleRate: 24000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        } 
-      })
+      // Get microphone access (honor selected device if provided)
+      const audioConstraints = {
+        channelCount: 1,
+        sampleRate: 24000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }
+
+      if (selectedDeviceId) {
+        // If "default" keep as string; otherwise require exact match
+        audioConstraints.deviceId = selectedDeviceId === 'default' 
+          ? 'default' 
+          : { exact: selectedDeviceId }
+      }
+
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+      } catch (constraintErr) {
+        console.warn('Primary getUserMedia failed, retrying with relaxed constraints:', constraintErr)
+        // Relax constraints as a fallback to avoid OverconstrainedError on some devices
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      }
       mediaStreamRef.current = stream
 
       // Load audio processor worklet for microphone
@@ -74,7 +148,7 @@ export function useVoiceAgent() {
       setError('Microphone access denied. Please allow microphone access and refresh.')
       return false
     }
-  }, [])
+  }, [selectedDeviceId])
 
   // Connect to WebSocket
   const connectWebSocket = useCallback(() => {
@@ -110,13 +184,15 @@ export function useVoiceAgent() {
       setIsSessionActive(false)
       setAgentStatus('Disconnected')
       
-      // Attempt reconnection
-      reconnectTimeoutRef.current = setTimeout(() => {
-        console.log('Attempting to reconnect...')
-        connectWebSocket()
-      }, RECONNECT_DELAY)
+      // Only attempt reconnection if not manually stopped
+      if (wsRef.current === ws) {
+        reconnectTimeoutRef.current = setTimeout(() => {
+          console.log('Attempting to reconnect...')
+          connectWebSocket()
+        }, RECONNECT_DELAY)
+      }
     }
-  }, [])
+  }, [connectWebSocket])  // Add dependency
 
   // Handle messages from server
   const handleServerMessage = (message) => {
@@ -145,17 +221,37 @@ export function useVoiceAgent() {
         // Play audio through worklet
         if (playbackWorkletRef.current && data.audio) {
           try {
+            // Ensure audio context is running before playing
+            if (audioContextRef.current?.state === 'suspended') {
+              audioContextRef.current.resume()
+            }
+            
             const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))
             const audioData = new Int16Array(audioBytes.buffer)
             playbackWorkletRef.current.port.postMessage({ audio: audioData })
+            setIsSpeaking(true)
           } catch (err) {
             console.error('Failed to decode audio:', err)
           }
         }
         break
 
+      case 'user_speech_started':
+        setAgentStatus('Listening to you...')
+        break
+
+      case 'user_speech_stopped':
+        setAgentStatus('Processing...')
+        break
+
       case 'agent_ready':
-        setAgentStatus('Listening...')
+        setAgentStatus('Ready - Agent speaking...')
+        // Ensure audio context is ready for playback
+        if (audioContextRef.current?.state === 'suspended') {
+          audioContextRef.current.resume().then(() => {
+            console.log('Audio context resumed for agent speech')
+          })
+        }
         break
 
       case 'claim_complete':
@@ -185,7 +281,13 @@ export function useVoiceAgent() {
       // Ensure WebSocket is connected
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         setError('Not connected to server. Attempting to connect...')
-        return
+        connectWebSocket() // Try to reconnect
+        // Wait a bit for connection
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          setError('Could not connect to server. Please refresh and try again.')
+          return
+        }
       }
 
       // Start session
@@ -193,15 +295,18 @@ export function useVoiceAgent() {
       setIsSessionActive(true)
       setAgentStatus('Starting session...')
       
-      // Resume audio context if suspended
+      // Resume audio context if suspended (critical for audio playback)
       if (audioContextRef.current?.state === 'suspended') {
         await audioContextRef.current.resume()
+        console.log('Audio context resumed for session')
       }
+      
+      console.log('Session started, audio context state:', audioContextRef.current?.state)
     } catch (err) {
       console.error('Failed to start session:', err)
       setError('Failed to start session: ' + err.message)
     }
-  }, [initializeAudio])
+  }, [initializeAudio, connectWebSocket])
 
   // Stop voice session
   const stopSession = useCallback(() => {
@@ -247,6 +352,51 @@ export function useVoiceAgent() {
     }
   }, [connectWebSocket, stopSession])
 
+  // Keep device list updated and react to hardware changes
+  useEffect(() => {
+    // Initial enumeration without forcing permission prompt
+    refreshAudioDevices(false)
+
+    const handleDeviceChange = () => refreshAudioDevices(false)
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange)
+    }
+    return () => {
+      if (navigator.mediaDevices && navigator.mediaDevices.removeEventListener) {
+        navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange)
+      }
+    }
+  }, [refreshAudioDevices])
+
+  // If no devices or labels are available, proactively request permission once
+  useEffect(() => {
+    const noDevices = microphones.length === 0
+    const labelsMissing = microphones.length > 0 && microphones.every(m => !m.label)
+    if (!autoPermissionPrompted && (noDevices || labelsMissing) && !permissionsGranted) {
+      setAutoPermissionPrompted(true)
+      requestDevicePermission()
+    }
+  }, [microphones, permissionsGranted, autoPermissionPrompted, requestDevicePermission])
+
+  // Add user interaction handler to resume audio context (browser requirement)
+  useEffect(() => {
+    const resumeAudioOnInteraction = async () => {
+      if (audioContextRef.current?.state === 'suspended') {
+        await audioContextRef.current.resume()
+        console.log('Audio context resumed by user interaction')
+      }
+    }
+    
+    // Listen for any user interaction to resume audio
+    document.addEventListener('click', resumeAudioOnInteraction)
+    document.addEventListener('touchstart', resumeAudioOnInteraction)
+    
+    return () => {
+      document.removeEventListener('click', resumeAudioOnInteraction)
+      document.removeEventListener('touchstart', resumeAudioOnInteraction)
+    }
+  }, [])
+
   return {
     isConnected,
     isSessionActive,
@@ -255,7 +405,16 @@ export function useVoiceAgent() {
     isClaimComplete,
     agentStatus,
     error,
+    isSpeaking,
     startSession,
     stopSession,
+    // microphone selection API
+    microphones,
+    selectedDeviceId,
+    setSelectedDeviceId,
+    refreshAudioDevices,
+    isEnumeratingDevices,
+    permissionsGranted,
+    requestDevicePermission,
   }
 }

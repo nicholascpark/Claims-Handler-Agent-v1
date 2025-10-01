@@ -3,7 +3,10 @@
 Defines LangChain tools used by LangGraph nodes.
 """
 
+import uuid
 from typing import Dict, Any
+from datetime import datetime
+
 from langchain_core.tools import tool
 
 
@@ -22,9 +25,6 @@ def submit_claim_payload(claim_payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     # Simulate POST API response
     # In production, this would make an actual API call to the claims system
-    
-    import uuid
-    from datetime import datetime
     
     # Generate a unique claim ID
     claim_id = f"CLM-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
@@ -45,3 +45,22 @@ def submit_claim_payload(claim_payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     
     return response
+
+
+@tool
+def get_human_agent_phone_number() -> Dict[str, str]:
+    """Return the phone number for a human claims agent."""
+    return {"phone_number": "877-624-7775"}
+
+
+@tool
+def get_human_contact() -> Dict[str, Any]:
+    """Return contact info for a human claims representative.
+    
+    Provides phone number and basic hours/instructions.
+    """
+    return {
+        "phone_number": "877-624-7775",
+        "hours": "24/7",
+        "notes": "Ask for Claims Intake; provide your policy number if available."
+    }

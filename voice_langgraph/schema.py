@@ -14,15 +14,28 @@ class ClaimantInfo(BaseModel):
     """Nested claimant information structure"""
     insured_name: str = Field(description="Full name of the insured party")
     insured_phone: str = Field(description="Primary contact phone number")
-    policy_number: Optional[str] = Field(default=None, description="Insurance policy number")
+    policy_number: Optional[str] = Field(default=None, description="Insurance policy number (POL-XXXXXX format)")
+
+
+class IncidentLocation(BaseModel):
+    """Nested incident location structure with detailed address information"""
+    incident_street_address: str = Field(description="Street address where incident occurred")
+    incident_zip_code: str = Field(description="Zip code or postal code of incident location")
 
 
 class IncidentDetails(BaseModel):
     """Nested incident information structure"""
     incident_date: str = Field(description="Date of incident (YYYY-MM-DD format)")
     incident_time: str = Field(description="Time of incident (HH:MM format)")
-    incident_location: str = Field(description="Specific location where incident occurred")
+    incident_location: IncidentLocation = Field(description="Detailed location where incident occurred")
     incident_description: str = Field(description="Detailed description of what happened")
+
+
+class PersonalInjury(BaseModel):
+    """Nested personal injury assessment structure"""
+    points_of_impact: List[str] = Field(description="List of specific body parts or areas affected by injury")
+    injury_description: str = Field(description="Detailed description of the injuries sustained")
+    severity: str = Field(description="Injury severity: minor, moderate, or severe")
 
 
 class PropertyDamage(BaseModel):
@@ -31,22 +44,22 @@ class PropertyDamage(BaseModel):
     points_of_impact: List[str] = Field(description="List of specific areas/points where damage occurred")
     damage_description: str = Field(description="Detailed description of the damage observed")
     estimated_damage_severity: str = Field(description="Estimated severity: minor, moderate, or severe")
-    additional_details: Optional[str] = Field(default=None, description="Additional relevant details (witnesses, police reports, etc.)")
 
 
 class PropertyClaim(BaseModel):
     """
     Enhanced property claim schema with double-nested structure.
     
-    Supports specialty property claims with exactly 11 fields total across nested structures.
+    Supports specialty property claims with nested structures for location, injuries, and property damage.
     Covers auto, home, condo, commercial, and other property types.
     Note: claim_id is generated during processing, not collected during intake.
     """
     
-    # Nested structures (11 fields total across these 3 objects)
+    # Nested structures
     claimant: ClaimantInfo = Field(description="Claimant contact and policy information")
     incident: IncidentDetails = Field(description="When, where, and how the incident occurred")
-    property_damage: PropertyDamage = Field(description="Detailed property damage assessment")
+    personal_injury: Optional[PersonalInjury] = Field(default=None, description="Personal injury details if applicable")
+    property_damage: Optional[PropertyDamage] = Field(default=None, description="Property damage assessment if applicable")
     
     # System-generated identifier (not collected during intake)
     claim_id: Optional[str] = Field(default=None, description="System-generated unique claim identifier")
@@ -71,19 +84,33 @@ class PropertyClaim(BaseModel):
             # Check incident required fields
             if not (is_valid_value(self.incident.incident_date) and
                    is_valid_value(self.incident.incident_time) and
-                   is_valid_value(self.incident.incident_location) and
+                   is_valid_value(self.incident.incident_location.incident_street_address) and
+                   is_valid_value(self.incident.incident_location.incident_zip_code) and
                    is_valid_value(self.incident.incident_description)):
                 return False
             
-            # Check property damage required fields
-            if not (is_valid_value(self.property_damage.property_type) and
-                   self.property_damage.points_of_impact and 
-                   len(self.property_damage.points_of_impact) > 0 and
-                   is_valid_value(self.property_damage.damage_description) and
-                   is_valid_value(self.property_damage.estimated_damage_severity)):
-                return False
+            # At least one of personal_injury or property_damage must be present and complete
+            has_injury = False
+            has_damage = False
             
-            return True
+            if self.personal_injury:
+                if (self.personal_injury.points_of_impact and 
+                    len(self.personal_injury.points_of_impact) > 0 and
+                    is_valid_value(self.personal_injury.injury_description) and
+                    is_valid_value(self.personal_injury.severity)):
+                    has_injury = True
+            
+            if self.property_damage:
+                if (is_valid_value(self.property_damage.property_type) and
+                    self.property_damage.points_of_impact and 
+                    len(self.property_damage.points_of_impact) > 0 and
+                    is_valid_value(self.property_damage.damage_description) and
+                    is_valid_value(self.property_damage.estimated_damage_severity)):
+                    has_damage = True
+            
+            # At least one type of damage (injury or property) must be complete
+            return has_injury or has_damage
+            
         except Exception:
             return False
 
@@ -112,20 +139,40 @@ class PropertyClaim(BaseModel):
                 missing.append('incident.incident_date')
             if not is_valid_value(self.incident.incident_time):
                 missing.append('incident.incident_time')
-            if not is_valid_value(self.incident.incident_location):
-                missing.append('incident.incident_location')
+            if not is_valid_value(self.incident.incident_location.incident_street_address):
+                missing.append('incident.incident_location.incident_street_address')
+            if not is_valid_value(self.incident.incident_location.incident_zip_code):
+                missing.append('incident.incident_location.incident_zip_code')
             if not is_valid_value(self.incident.incident_description):
                 missing.append('incident.incident_description')
             
-            # Check property damage fields
-            if not is_valid_value(self.property_damage.property_type):
-                missing.append('property_damage.property_type')
-            if not self.property_damage.points_of_impact or len(self.property_damage.points_of_impact) == 0:
-                missing.append('property_damage.points_of_impact')
-            if not is_valid_value(self.property_damage.damage_description):
-                missing.append('property_damage.damage_description')
-            if not is_valid_value(self.property_damage.estimated_damage_severity):
-                missing.append('property_damage.estimated_damage_severity')
+            # Check if at least one of personal_injury or property_damage is present
+            has_injury_data = self.personal_injury is not None
+            has_damage_data = self.property_damage is not None
+            
+            # Check personal injury fields if present
+            if has_injury_data:
+                if not self.personal_injury.points_of_impact or len(self.personal_injury.points_of_impact) == 0:
+                    missing.append('personal_injury.points_of_impact')
+                if not is_valid_value(self.personal_injury.injury_description):
+                    missing.append('personal_injury.injury_description')
+                if not is_valid_value(self.personal_injury.severity):
+                    missing.append('personal_injury.severity')
+            
+            # Check property damage fields if present
+            if has_damage_data:
+                if not is_valid_value(self.property_damage.property_type):
+                    missing.append('property_damage.property_type')
+                if not self.property_damage.points_of_impact or len(self.property_damage.points_of_impact) == 0:
+                    missing.append('property_damage.points_of_impact')
+                if not is_valid_value(self.property_damage.damage_description):
+                    missing.append('property_damage.damage_description')
+                if not is_valid_value(self.property_damage.estimated_damage_severity):
+                    missing.append('property_damage.estimated_damage_severity')
+            
+            # If neither injury nor damage is specified, we need to know which one applies
+            if not has_injury_data and not has_damage_data:
+                missing.append('damage_type_unknown')
             
         except Exception:
             missing.append('schema_validation_error')
@@ -133,27 +180,59 @@ class PropertyClaim(BaseModel):
         return missing
 
     @classmethod
-    def get_field_collection_order(cls) -> List[tuple]:
-        """Get the logical order for collecting fields with user-friendly descriptions (claim_id excluded - system generated)."""
+    def get_field_collection_order(cls) -> List[tuple[str, str]]:
+        """Return ordered (field_path, friendly_name) pairs for intake.
+
+        The order reflects the desired conversational collection sequence.
+        """
         return [
-            # Claimant identification first
-            ('claimant.insured_name', "your full name"),
-            ('claimant.insured_phone', "the best phone number to reach you"),
-            ('claimant.policy_number', "your policy number (if available)"),
-            
-            # Incident details 
-            ('incident.incident_date', "the date this happened"),
-            ('incident.incident_time', "what time it occurred"),
-            ('incident.incident_location', "where this took place"),
-            ('incident.incident_description', "what exactly happened"),
-            
-            # Property damage assessment
-            ('property_damage.property_type', "what type of property was affected"),
-            ('property_damage.points_of_impact', "which specific areas were damaged"),
-            ('property_damage.damage_description', "details about the damage you can see"),
-            ('property_damage.estimated_damage_severity', "how severe the damage appears"),
-            ('property_damage.additional_details', "any other important details")
+            # Claimant first
+            ("claimant.insured_name", "full name"),
+            ("claimant.insured_phone", "phone number"),
+            ("claimant.policy_number", "policy number"),
+            # Incident details
+            ("incident.incident_date", "date of incident"),
+            ("incident.incident_time", "time of incident"),
+            ("incident.incident_location.incident_street_address", "incident address"),
+            ("incident.incident_location.incident_zip_code", "incident zip/postal code"),
+            ("incident.incident_description", "what happened"),
+            # Damage details (either personal injury or property damage)
+            ("personal_injury.points_of_impact", "injury points of impact"),
+            ("personal_injury.injury_description", "injury description"),
+            ("personal_injury.severity", "injury severity"),
+            ("property_damage.property_type", "property type"),
+            ("property_damage.points_of_impact", "damaged areas"),
+            ("property_damage.damage_description", "damage description"),
+            ("property_damage.estimated_damage_severity", "damage severity"),
         ]
+
+
+    @classmethod
+    def create_empty(cls) -> "PropertyClaim":
+        """Factory method to create an empty PropertyClaim with all fields as empty strings.
+        
+        This ensures all required fields exist in the structure from the beginning,
+        making it easier for trustcall to patch values incrementally.
+        """
+        return cls(
+            claimant=ClaimantInfo(
+                insured_name="",
+                insured_phone="",
+                policy_number=None  # Optional field
+            ),
+            incident=IncidentDetails(
+                incident_date="",
+                incident_time="",
+                incident_location=IncidentLocation(
+                    incident_street_address="",
+                    incident_zip_code=""
+                ),
+                incident_description=""
+            ),
+            personal_injury=None,  # Optional - only if personal injury involved
+            property_damage=None,  # Optional - only if property damage involved
+            claim_id=None  # System-generated
+        )
 
 # For backward compatibility, create an alias
 SimplifiedClaim = PropertyClaim
@@ -169,15 +248,17 @@ EXAMPLE_HOME_CLAIM = PropertyClaim(
     incident=IncidentDetails(
         incident_date="2025-09-22",
         incident_time="03:30",
-        incident_location="123 Oak Street, Portland, OR",
+        incident_location=IncidentLocation(
+            incident_street_address="123 Oak Street, Portland, OR",
+            incident_zip_code="97201"
+        ),
         incident_description="Storm damage from high winds during severe weather event"
     ),
     property_damage=PropertyDamage(
         property_type="home",
         points_of_impact=["roof", "front porch", "living room window"],
         damage_description="Fallen tree branch punctured roof, damaged shingles, broke living room window",
-        estimated_damage_severity="moderate",
-        additional_details="Storm reported by National Weather Service, no injuries, neighbors witnessed event"
+        estimated_damage_severity="moderate"
     )
 )
 
@@ -190,15 +271,22 @@ EXAMPLE_AUTO_CLAIM = PropertyClaim(
     incident=IncidentDetails(
         incident_date="2025-09-21",
         incident_time="14:30",
-        incident_location="Main St & 5th Ave intersection, Seattle, WA",
+        incident_location=IncidentLocation(
+            incident_street_address="Main St & 5th Ave intersection, Seattle, WA",
+            incident_zip_code="98101"
+        ),
         incident_description="Rear-end collision while stopped at red light"
+    ),
+    personal_injury=PersonalInjury(
+        points_of_impact=["neck", "lower back"],
+        injury_description="Whiplash from sudden impact, lower back pain",
+        severity="minor"
     ),
     property_damage=PropertyDamage(
         property_type="auto",
         points_of_impact=["rear bumper", "trunk", "rear lights"],
         damage_description="Significant rear-end damage, bumper detached, trunk won't close",
-        estimated_damage_severity="moderate",
-        additional_details="Police report filed, witness present, other driver admitted fault"
+        estimated_damage_severity="moderate"
     )
 )
 
@@ -211,15 +299,17 @@ EXAMPLE_COMMERCIAL_CLAIM = PropertyClaim(
     incident=IncidentDetails(
         incident_date="2025-09-20",
         incident_time="09:15",
-        incident_location="456 Business Plaza, Denver, CO",
+        incident_location=IncidentLocation(
+            incident_street_address="456 Business Plaza, Denver, CO",
+            incident_zip_code="80202"
+        ),
         incident_description="Water pipe burst in ceiling causing flooding"
     ),
     property_damage=PropertyDamage(
         property_type="commercial", 
         points_of_impact=["office ceiling", "computer equipment", "carpet", "furniture"],
         damage_description="Water damage to electronics, soaked carpeting, ceiling tiles collapsed",
-        estimated_damage_severity="severe",
-        additional_details="Building maintenance notified, electricity shut off for safety, business operations halted"
+        estimated_damage_severity="severe"
     )
 )
 

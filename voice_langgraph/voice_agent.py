@@ -11,10 +11,13 @@ import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
+from langchain_core.messages import HumanMessage, AIMessage
+
 from .settings import voice_settings, validate_voice_settings
 from .graph_builder import default_graph
-from .state import VoiceAgentState, ConversationMessage
+from .state import VoiceAgentState
 from .prompts import Prompts
+from .schema import PropertyClaim
 from .utils import (
     AudioProcessor,
     AudioPlayback,
@@ -41,7 +44,7 @@ class VoiceAgent:
     def __init__(self, display_json: bool = False, display_interval: float = 1.0):
         # Configuration
         self.voice = voice_settings.JUNIOR_AGENT_VOICE
-        self.instructions = Prompts.get_realtime_agent_instructions()
+        self.instructions = Prompts.get_supervisor_system_prompt()
         self.display_json = display_json
         self.display_interval = display_interval
         
@@ -52,8 +55,9 @@ class VoiceAgent:
         
         # State
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.conversation_history: List[ConversationMessage] = []
-        self.current_claim_data: Dict[str, Any] = {}
+        self.conversation_history: List[dict] = []
+        # Initialize with empty structure using factory method
+        self.current_claim_data: Dict[str, Any] = PropertyClaim.create_empty().model_dump()
         self.current_timezone: str = "America/Toronto"  # Default timezone
         self._greeting_sent = False
         self._is_running = False
@@ -94,10 +98,8 @@ class VoiceAgent:
         """
         # Create state for LangGraph workflow
         state: VoiceAgentState = {
-            "conversation_history": self.conversation_history,
-            "current_user_message": user_message,
+            "messages": [HumanMessage(content=user_message)],
             "claim_data": self.current_claim_data,
-            "session_id": self.session_id,
             "timestamp": datetime.now().isoformat(),
             "current_timezone": self.current_timezone,
         }
@@ -119,21 +121,29 @@ class VoiceAgent:
                     print("\n" + format_claim_summary(self.current_claim_data))
                     
             # Handle assistant speech depending on orchestration mode
-            response_message = result.get("last_assistant_message", "I'm here to help with your claim.")
+            # Extract last assistant message from messages
+            response_message = "I'm here to help with your claim."
+            try:
+                for m in reversed(result.get("messages", [])):
+                    if isinstance(m, AIMessage):
+                        response_message = m.content
+                        break
+            except Exception:
+                pass
             
-            # If Realtime is the talker, don't send manual assistant speech to avoid double speak
-            if not voice_settings.REALTIME_AS_TALKER:
-                # Create a conversation item with the response
+            # LangGraph orchestrates responses, Realtime speaks them
+            if voice_settings.REALTIME_AS_TALKER:
+                # Create a conversation item with the LangGraph-generated response
                 await self.ws_manager.send({
                     "type": "conversation.item.create",
                     "item": {
                         "type": "message",
                         "role": "assistant",
-                        "content": [{"type": "input_text", "text": response_message}]
+                        "content": [{"type": "text", "text": response_message}]
                     },
                 })
                 
-                # Trigger response generation
+                # Trigger response generation for Realtime to speak it
                 await self.ws_manager.send({
                     "type": "response.create",
                     "response": {
@@ -164,7 +174,7 @@ class VoiceAgent:
                 "item": {
                     "type": "message",
                     "role": "assistant",
-                    "content": [{"type": "input_text", "text": "I'm here to help with your claim. Could you please tell me what happened?"}]
+                    "content": [{"type": "text", "text": "I'm here to help with your claim. Could you please tell me what happened?"}]
                 },
             })
             await self.ws_manager.send({"type": "response.create"})
@@ -217,6 +227,12 @@ class VoiceAgent:
                         "content": transcript,
                         "timestamp": get_timestamp()
                     })
+                    
+        elif event_type == "input_audio_buffer.speech_stopped":
+            # Cancel VAD-triggered auto-response immediately when speech stops
+            # This prevents Realtime from creating its own response
+            # LangGraph will generate the intelligent response instead
+            await self.ws_manager.send({"type": "response.cancel"})
                     
         elif event_type == "conversation.item.input_audio_transcription.completed":
             # Capture user transcript and trigger LangGraph workflow

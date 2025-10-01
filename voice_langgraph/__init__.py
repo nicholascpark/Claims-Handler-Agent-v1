@@ -19,7 +19,7 @@ Key components:
 
 from .voice_agent import VoiceAgent, main
 from .graph_builder import build_voice_agent_graph, build_supervisor_only_graph
-from .state import VoiceAgentState, ConversationMessage
+from .state import VoiceAgentState
 from .schema import PropertyClaim
 from .tools import submit_claim_payload
 
@@ -29,7 +29,6 @@ __all__ = [
     "build_voice_agent_graph", 
     "build_supervisor_only_graph",
     "VoiceAgentState",
-    "ConversationMessage",
     "PropertyClaim",
     "submit_claim_payload",
 ]

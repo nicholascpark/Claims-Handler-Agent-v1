@@ -13,14 +13,13 @@ from .nodes import (
     extraction_worker_node,
     supervisor_node,
     submission_node,
-    response_generation_node,
+    get_human_representative,
     error_handling_node
 )
 from .edges import (
     route_after_input,
     route_after_extraction,
     route_after_supervisor,
-    route_after_response,
     route_after_error
 )
 
@@ -54,7 +53,7 @@ def build_voice_agent_graph(with_memory: bool = True) -> Any:
     graph.add_node("extraction_worker", extraction_worker_node)
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("submission", submission_node)
-    graph.add_node("response_generator", response_generation_node)
+    graph.add_node("get_human_representative", get_human_representative)
     graph.add_node("error_handler", error_handling_node)
     
     # Add edges from START
@@ -85,22 +84,15 @@ def build_voice_agent_graph(with_memory: bool = True) -> Any:
         route_after_supervisor,
         {
             "submission": "submission",
-            "response_generator": "response_generator",
+            "get_human_representative": "get_human_representative",
             "end": END,
             "error_handler": "error_handler"
         }
     )
     
-    # Submission node routes to end
+    # Submission and human representative nodes route to end
     graph.add_edge("submission", END)
-    
-    graph.add_conditional_edges(
-        "response_generator",
-        route_after_response,
-        {
-            "end": END
-        }
-    )
+    graph.add_edge("get_human_representative", END)
     
     graph.add_conditional_edges(
         "error_handler",
@@ -129,24 +121,13 @@ def build_supervisor_only_graph() -> Any:
     """
     graph = StateGraph(VoiceAgentState)
     
-    # Simple flow: input -> supervisor -> response/end
-    graph.add_node("voice_input", voice_input_node) 
+    # Simple flow: input -> supervisor -> end
+    graph.add_node("voice_input", voice_input_node)
     graph.add_node("supervisor", supervisor_node)
-    graph.add_node("response_generator", response_generation_node)
     
     graph.add_edge(START, "voice_input")
     graph.add_edge("voice_input", "supervisor")
-    
-    graph.add_conditional_edges(
-        "supervisor",
-        lambda state: "end" if state.get("last_assistant_message") else "response_generator",
-        {
-            "response_generator": "response_generator",
-            "end": END
-        }
-    )
-    
-    graph.add_edge("response_generator", END)
+    graph.add_edge("supervisor", END)
     
     return graph.compile()
 

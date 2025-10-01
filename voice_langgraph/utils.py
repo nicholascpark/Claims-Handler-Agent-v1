@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import sounddevice as sd
 import pytz
-from websockets import WebSocketClientProtocol
+import aiohttp
+from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType
 
 
 class AudioProcessor:
@@ -203,34 +204,35 @@ class WebSocketManager:
     def __init__(self, url: str, api_key: str):
         self.url = url
         self.api_key = api_key
-        self.ws: Optional[WebSocketClientProtocol] = None
+        self.session: Optional[ClientSession] = None
+        self.ws: Optional[ClientWebSocketResponse] = None
         self._is_connected = False
         
-    def get_headers(self) -> list:
+    def get_headers(self) -> Dict[str, str]:
         """Get WebSocket headers."""
-        return [
-            ("api-key", self.api_key),
-            ("OpenAI-Beta", "realtime=v1")
-        ]
+        return {
+            "api-key": self.api_key,
+            "OpenAI-Beta": "realtime=v1",
+        }
         
     def get_ssl_context(self) -> Optional[ssl.SSLContext]:
         """Get SSL context for secure connections."""
         # Create default SSL context for secure WebSocket connections
         return ssl.create_default_context()
         
-    async def connect(self) -> WebSocketClientProtocol:
-        """Establish WebSocket connection."""
-        import websockets
-        
-        self.ws = await websockets.connect(
+    async def connect(self) -> ClientWebSocketResponse:
+        """Establish WebSocket connection using aiohttp."""
+        timeout = aiohttp.ClientTimeout(total=30)
+        self.session = aiohttp.ClientSession(timeout=timeout)
+        self.ws = await self.session.ws_connect(
             self.url,
-            extra_headers=self.get_headers(),
-            subprotocols=["realtime"],
+            headers=self.get_headers(),
+            protocols=["realtime"],
             ssl=self.get_ssl_context(),
-            ping_interval=20,
-            ping_timeout=10,
-            close_timeout=5,
-            max_size=10_000_000
+            heartbeat=20,
+            max_msg_size=10_000_000,
+            autoclose=True,
+            autoping=True,
         )
         self._is_connected = True
         return self.ws
@@ -239,7 +241,7 @@ class WebSocketManager:
         """Send event to WebSocket."""
         if self.ws and self._is_connected:
             try:
-                await self.ws.send(json.dumps(event))
+                await self.ws.send_str(json.dumps(event))
             except Exception:
                 # Connection is closed or invalid
                 self._is_connected = False
@@ -247,16 +249,24 @@ class WebSocketManager:
     async def receive(self) -> Dict[str, Any]:
         """Receive and parse WebSocket message."""
         if self.ws:
-            message = await self.ws.recv()
-            return json.loads(message)
+            msg = await self.ws.receive()
+            if msg.type == WSMsgType.TEXT:
+                return json.loads(msg.data)
+            if msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
+                raise ConnectionError("WebSocket connection closed or errored")
+            # For other message types (e.g., ping/pong/binary), ignore or handle as needed
+            return {}
         raise ConnectionError("WebSocket not connected")
         
     async def close(self):
         """Close WebSocket connection."""
-        if self.ws:
-            self._is_connected = False
+        self._is_connected = False
+        if self.ws is not None:
             await self.ws.close()
             self.ws = None
+        if self.session is not None:
+            await self.session.close()
+            self.session = None
 
 
 def encode_audio(audio_data: bytes) -> str:
@@ -275,39 +285,64 @@ def get_timestamp() -> str:
 
 
 def format_claim_summary(claim_data: Dict[str, Any]) -> str:
-    """Format claim data into a readable summary."""
+    """Format claim data into a readable summary for PropertyClaim schema."""
     lines = ["📋 Claim Summary:"]
     
-    # Claimant info
-    claimant = claim_data.get('claimant', {})
+    # Claimant info (PropertyClaim.claimant)
+    claimant = claim_data.get('claimant', {}) or {}
     if claimant:
         lines.append("\n👤 Claimant Information:")
-        if claimant.get('full_name'):
-            lines.append(f"   • Name: {claimant['full_name']}")
-        if claimant.get('phone'):
-            lines.append(f"   • Phone: {claimant['phone']}")
-        if claimant.get('email'):
-            lines.append(f"   • Email: {claimant['email']}")
+        if claimant.get('insured_name'):
+            lines.append(f"   • Name: {claimant['insured_name']}")
+        if claimant.get('insured_phone'):
+            lines.append(f"   • Phone: {claimant['insured_phone']}")
+        if claimant.get('policy_number'):
+            lines.append(f"   • Policy: {claimant['policy_number']}")
     
-    # Property info
-    property_info = claim_data.get('property', {})
-    if property_info:
-        lines.append("\n🏠 Property Information:")
-        if property_info.get('address'):
-            lines.append(f"   • Address: {property_info['address']}")
-        if property_info.get('type'):
-            lines.append(f"   • Type: {property_info['type']}")
+    # Incident info (PropertyClaim.incident)
+    incident = claim_data.get('incident', {}) or {}
+    if incident:
+        lines.append("\n📍 Incident Details:")
+        if incident.get('incident_date'):
+            lines.append(f"   • Date: {incident['incident_date']}")
+        if incident.get('incident_time'):
+            lines.append(f"   • Time: {incident['incident_time']}")
+        loc = incident.get('incident_location', {}) or {}
+        if loc.get('incident_street_address'):
+            lines.append(f"   • Address: {loc['incident_street_address']}")
+        if loc.get('incident_zip_code'):
+            lines.append(f"   • Zip/Postal: {loc['incident_zip_code']}")
+        if incident.get('incident_description'):
+            lines.append(f"   • What happened: {incident['incident_description']}")
     
-    # Damage info
-    damage = claim_data.get('damage', {})
-    if damage:
-        lines.append("\n⚠️ Damage Information:")
-        if damage.get('type'):
-            lines.append(f"   • Type: {damage['type']}")
-        if damage.get('date'):
-            lines.append(f"   • Date: {damage['date']}")
-        if damage.get('description'):
-            lines.append(f"   • Description: {damage['description']}")
+    # Personal Injury (optional)
+    injury = claim_data.get('personal_injury') or None
+    if isinstance(injury, dict) and injury:
+        lines.append("\n🩺 Personal Injury:")
+        if injury.get('points_of_impact'):
+            lines.append(f"   • Points of impact: {', '.join(injury.get('points_of_impact', []))}")
+        if injury.get('injury_description'):
+            lines.append(f"   • Description: {injury['injury_description']}")
+        if injury.get('severity'):
+            lines.append(f"   • Severity: {injury['severity']}")
+    
+    # Property Damage (optional)
+    damage = claim_data.get('property_damage') or None
+    if isinstance(damage, dict) and damage:
+        lines.append("\n🧱 Property Damage:")
+        if damage.get('property_type'):
+            lines.append(f"   • Type: {damage['property_type']}")
+        if damage.get('points_of_impact'):
+            lines.append(f"   • Damaged areas: {', '.join(damage.get('points_of_impact', []))}")
+        if damage.get('damage_description'):
+            lines.append(f"   • Description: {damage['damage_description']}")
+        if damage.get('estimated_damage_severity'):
+            lines.append(f"   • Severity: {damage['estimated_damage_severity']}")
+    
+    # Claim id
+    if claim_data.get('claim_id'):
+        lines.append("\n📝 Submission:")
+        lines.append(f"   • Claim ID: {claim_data['claim_id']}")
     
     return "\n".join(lines)
 
@@ -407,28 +442,51 @@ def parse_relative_time(
     user_lower = user_input.lower()
     
     # Common relative time patterns
+    result = {}
+    
+    # Date parsing
     if "yesterday" in user_lower:
         target_date = now - timedelta(days=1)
-        return {
-            "date": target_date.strftime("%Y-%m-%d"),
-            "reference": "yesterday"
-        }
-    elif "today" in user_lower or "this morning" in user_lower or "this afternoon" in user_lower:
-        return {
-            "date": now.strftime("%Y-%m-%d"),
-            "reference": "today"
-        }
+        result["date"] = target_date.strftime("%Y-%m-%d")
+        result["reference"] = "yesterday"
+        
+        # Check for time context like "around this time"
+        if "around this time" in user_lower or "at this time" in user_lower:
+            result["time"] = now.strftime("%H:%M")
+            result["time_reference"] = "around this time"
+            
+    elif "today" in user_lower:
+        result["date"] = now.strftime("%Y-%m-%d")
+        result["reference"] = "today"
+        
+        if "this morning" in user_lower:
+            result["time"] = "09:00"  # Approximate morning time
+            result["time_reference"] = "this morning"
+        elif "this afternoon" in user_lower:
+            result["time"] = "14:00"  # Approximate afternoon time
+            result["time_reference"] = "this afternoon"
+        elif "around this time" in user_lower:
+            result["time"] = now.strftime("%H:%M")
+            result["time_reference"] = "around this time"
+            
     elif "last week" in user_lower:
         target_date = now - timedelta(days=7)
-        return {
-            "date": target_date.strftime("%Y-%m-%d"),
-            "reference": "last week"
-        }
+        result["date"] = target_date.strftime("%Y-%m-%d")
+        result["reference"] = "last week"
+        
     elif "two days ago" in user_lower or "2 days ago" in user_lower:
         target_date = now - timedelta(days=2)
-        return {
-            "date": target_date.strftime("%Y-%m-%d"),
-            "reference": "two days ago"
-        }
+        result["date"] = target_date.strftime("%Y-%m-%d")
+        result["reference"] = "two days ago"
+        
+    elif "three days ago" in user_lower or "3 days ago" in user_lower:
+        target_date = now - timedelta(days=3)
+        result["date"] = target_date.strftime("%Y-%m-%d")
+        result["reference"] = "three days ago"
+        
+    # Time-only patterns
+    elif "around this time" in user_lower or "at this time" in user_lower:
+        result["time"] = now.strftime("%H:%M")
+        result["time_reference"] = "around this time"
     
-    return None
+    return result if result else None
