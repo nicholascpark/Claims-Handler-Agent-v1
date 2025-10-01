@@ -300,7 +300,8 @@ async def submission_node(state: VoiceAgentState) -> VoiceAgentState:
     """Submit the completed claim payload.
     
     This node is triggered when PropertyClaim.is_complete() returns True.
-    It calls the submit_claim_payload tool to finalize the claim.
+    It calls the submit_claim_payload tool to finalize the claim and generates
+    a warm summary using the supervisor LLM.
     """
     try:
         claim_data = state.get("claim_data", {})
@@ -313,12 +314,44 @@ async def submission_node(state: VoiceAgentState) -> VoiceAgentState:
         state["submission_result"] = submission_result
         state["next_action"] = "complete"
         
-        # Format completion message with claim ID
-        state["messages"] = [AIMessage(content=(
-            f"Thank you. I've submitted your claim. "
-            f"Your reference number is {submission_result.get('claim_id')}. "
-            f"{submission_result.get('next_steps', 'A claims adjuster will contact you soon.')}"
-        ))]
+        # Generate a warm, personalized summary using supervisor LLM
+        summary_messages = [
+            SystemMessage(content=f"""You are {voice_settings.AGENT_NAME}, providing a final summary after successfully submitting a claim.
+Your tone should be:
+- Warm, reassuring, and professional
+- Brief but comprehensive (exactly 2 sentences)
+- Include the claim number and next steps
+
+The caller has just completed their claim intake process and you need to provide closure with confidence that they're in good hands."""),
+            HumanMessage(content=f"""Generate a final summary message for the completed claim submission.
+
+Claim data submitted:
+{json.dumps(claim_data, indent=2)}
+
+Submission result:
+- Claim ID: {submission_result.get('claim_id')}
+- Status: {submission_result.get('status')}
+- Next steps: {submission_result.get('next_steps', 'A claims adjuster will contact you within 24-48 hours.')}
+
+Provide a warm, reassuring 2-sentence summary that:
+1. First sentence: Acknowledges the completion and mentions the claim number
+2. Second sentence: Provides next steps and reassurance
+
+Use the caller's name if available in the claim data.""")
+        ]
+        
+        try:
+            summary_response = await supervisor_llm.ainvoke(summary_messages)
+            completion_message = summary_response.content.strip()
+        except Exception as e:
+            # Fallback message if LLM fails
+            completion_message = (
+                f"Thank you for providing all the details about your claim. "
+                f"I've successfully submitted everything with claim number {submission_result.get('claim_id')}, "
+                f"and {submission_result.get('next_steps', 'a claims adjuster will contact you within 24-48 hours')}"
+            )
+        
+        state["messages"] = [AIMessage(content=completion_message)]
         
     except Exception as e:
         state["error"] = f"Failed to submit claim: {str(e)}"
