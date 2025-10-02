@@ -90,16 +90,17 @@ def build_voice_agent_graph(with_memory: bool = True) -> Any:
         }
     )
     
-    # Submission and human representative nodes route to end
-    graph.add_edge("submission", END)
-    graph.add_edge("get_human_representative", END)
+    # After tool nodes, return to supervisor to render tool outputs
+    graph.add_edge("submission", "supervisor")
+    graph.add_edge("get_human_representative", "supervisor")
     
     graph.add_conditional_edges(
         "error_handler",
         route_after_error,
         {
             "end": END,
-            "supervisor": "supervisor"
+            "supervisor": "supervisor",
+            "get_human_representative": "get_human_representative"
         }
     )
     

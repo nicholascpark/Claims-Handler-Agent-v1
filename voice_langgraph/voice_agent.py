@@ -72,7 +72,13 @@ class VoiceAgent:
         return https_url.replace("https://", "wss://").replace("http://", "ws://")
         
     def _get_session_config(self) -> Dict[str, Any]:
-        """Get Realtime API session configuration."""
+        """Get Realtime API session configuration.
+        
+        Optimized for real-time audio:
+        - Uses input_audio_transcription for reliable transcripts
+        - Transcripts available via conversation.item.input_audio_transcription.completed
+        - Using server VAD for natural turn detection
+        """
         return {
             "modalities": ["text", "audio"],
             "instructions": self.instructions,
@@ -80,8 +86,8 @@ class VoiceAgent:
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
             "input_audio_transcription": {
-                "model": voice_settings.TRANSCRIPTION_MODEL,
                 "language": voice_settings.TRANSCRIPTION_LANGUAGE,
+                "model": voice_settings.TRANSCRIPTION_MODEL,
             },
             "turn_detection": {
                 "type": "server_vad",
@@ -97,11 +103,15 @@ class VoiceAgent:
         Triggered by transcription completion events from Realtime API.
         """
         # Create state for LangGraph workflow
+        # Note: Only pass NEW messages - LangGraph's checkpointer handles history
         state: VoiceAgentState = {
             "messages": [HumanMessage(content=user_message)],
             "claim_data": self.current_claim_data,
             "timestamp": datetime.now().isoformat(),
             "current_timezone": self.current_timezone,
+            "is_claim_complete": False,
+            "escalation_requested": False,
+            "retry_count": 0,
         }
         
         # Config with thread_id required for checkpointer
@@ -154,7 +164,6 @@ class VoiceAgent:
             # Check if claim is complete
             if result.get("is_claim_complete"):
                 print("\n✅ Claim intake complete!")
-                
                 # Display submission result if available
                 submission_result = result.get("submission_result")
                 if submission_result:
@@ -163,6 +172,8 @@ class VoiceAgent:
                     print(f"   • Status: {submission_result.get('status')}")
                     print(f"   • Submitted at: {submission_result.get('submitted_at')}")
                     print(f"   • Next steps: {submission_result.get('next_steps')}")
+                    if submission_result.get("summary_two_sentences"):
+                        print(f"   • Summary: {submission_result.get('summary_two_sentences')}")
                 
                 print("\n" + format_claim_summary(self.current_claim_data))
                 
@@ -180,7 +191,13 @@ class VoiceAgent:
             await self.ws_manager.send({"type": "response.create"})
             
     async def _handle_websocket_event(self, event: Dict[str, Any]):
-        """Handle incoming WebSocket events."""
+        """Handle incoming WebSocket events.
+        
+        Optimized for real-time audio:
+        - Uses conversation.item.created for faster transcript access
+        - Handles response.done for assistant transcripts
+        - Better interruption handling
+        """
         event_type = event.get("type", "")
         
         if event_type == "session.created":
@@ -209,17 +226,18 @@ class VoiceAgent:
                 print(f"[{get_timestamp()}] 🎙️ AI listening...")
                 
         elif event_type == "response.audio.delta":
-            # Handle audio playback
+            # Handle audio playback - stream immediately for lowest latency
             audio_b64 = event.get("delta", "") or event.get("audio", "")
             if audio_b64:
                 audio_data = decode_audio(audio_b64)
                 await self.audio_playback.add_audio(audio_data)
                 
-        elif event_type == "response.content_part.done":
-            # Capture assistant transcript
-            part = event.get("part", {})
-            if part.get("type") == "audio" and part.get("transcript"):
-                transcript = part["transcript"].strip()
+        elif event_type == "response.audio_transcript.done":
+            # OPTIMIZED: Capture assistant transcript from audio transcript done event
+            # This is faster than waiting for content_part.done
+            transcript = event.get("transcript", "")
+            if transcript and isinstance(transcript, str):
+                transcript = transcript.strip()
                 if transcript:
                     print(f"[{get_timestamp()}] 🤖 AI: {transcript}")
                     self.conversation_history.append({
@@ -227,26 +245,100 @@ class VoiceAgent:
                         "content": transcript,
                         "timestamp": get_timestamp()
                     })
+            else:
+                print(f"[{get_timestamp()}] 🐛 DEBUG: response.audio_transcript.done - transcript is None or not string")
+                
+        elif event_type == "response.content_part.done":
+            # Fallback: Capture assistant transcript if not already captured
+            part = event.get("part", {})
+            if part.get("type") == "audio":
+                transcript = part.get("transcript")
+                if transcript and isinstance(transcript, str):
+                    transcript = transcript.strip()
+                    if transcript:
+                        # Check if already added via response.audio_transcript.done
+                        if not (self.conversation_history and 
+                               self.conversation_history[-1].get("content") == transcript):
+                            print(f"[{get_timestamp()}] 🤖 AI: {transcript}")
+                            self.conversation_history.append({
+                                "role": "assistant",
+                                "content": transcript,
+                                "timestamp": get_timestamp()
+                            })
                     
         elif event_type == "input_audio_buffer.speech_stopped":
             # Cancel VAD-triggered auto-response immediately when speech stops
             # This prevents Realtime from creating its own response
             # LangGraph will generate the intelligent response instead
             await self.ws_manager.send({"type": "response.cancel"})
+            print(f"[{get_timestamp()}] 🎤 Speech stopped, processing...")
                     
-        elif event_type == "conversation.item.input_audio_transcription.completed":
-            # Capture user transcript and trigger LangGraph workflow
-            transcript = event.get("transcript", "").strip()
-            if transcript:
-                print(f"[{get_timestamp()}] 👤 User: {transcript}")
-                self.conversation_history.append({
-                    "role": "user", 
-                    "content": transcript,
-                    "timestamp": get_timestamp()
-                })
+        elif event_type == "conversation.item.created":
+            # OPTIMIZED: Get user transcripts from conversation items (faster than transcription.completed)
+            item = event.get("item", {})
+            print(f"[{get_timestamp()}] 🐛 DEBUG: conversation.item.created - item type: {item.get('type')}, role: {item.get('role')}")
+            
+            if item.get("type") == "message" and item.get("role") == "user":
+                # Check for audio content with transcript
+                content = item.get("content", [])
+                print(f"[{get_timestamp()}] 🐛 DEBUG: User message content: {len(content)} parts")
                 
-                # Trigger LangGraph workflow directly
-                await self._run_langgraph_workflow(transcript)
+                for idx, content_part in enumerate(content):
+                    content_type = content_part.get("type")
+                    print(f"[{get_timestamp()}] 🐛 DEBUG: Content part {idx}: type={content_type}")
+                    
+                    if content_type == "input_audio":
+                        transcript = content_part.get("transcript")
+                        print(f"[{get_timestamp()}] 🐛 DEBUG: Transcript value: {transcript} (type: {type(transcript)})")
+                        
+                        if transcript and isinstance(transcript, str):
+                            transcript = transcript.strip()
+                            if transcript:
+                                print(f"[{get_timestamp()}] 👤 User: {transcript}")
+                                self.conversation_history.append({
+                                    "role": "user", 
+                                    "content": transcript,
+                                    "timestamp": get_timestamp()
+                                })
+                                
+                                # Trigger LangGraph workflow directly
+                                await self._run_langgraph_workflow(transcript)
+                                break
+                        else:
+                            print(f"[{get_timestamp()}] 🐛 DEBUG: Transcript not available yet in conversation.item.created")
+                            # Transcript might not be available yet - will be captured by other events
+                            
+        elif event_type == "input_audio_buffer.committed":
+            # Audio buffer committed - speech is ready for processing
+            # This happens after speech_stopped and before transcription
+            print(f"[{get_timestamp()}] 📝 Audio committed, awaiting transcript...")
+            
+        elif event_type == "conversation.item.input_audio_transcription.completed":
+            # FALLBACK: Use this event if transcript wasn't available in conversation.item.created
+            # This is the reliable fallback for getting user transcripts
+            transcript = event.get("transcript")
+            if transcript and isinstance(transcript, str):
+                transcript = transcript.strip()
+                if transcript:
+                    # Check if we already processed this transcript
+                    if not (self.conversation_history and 
+                           self.conversation_history[-1].get("role") == "user" and
+                           self.conversation_history[-1].get("content") == transcript):
+                        print(f"[{get_timestamp()}] 👤 User: {transcript}")
+                        self.conversation_history.append({
+                            "role": "user", 
+                            "content": transcript,
+                            "timestamp": get_timestamp()
+                        })
+                        
+                        # Trigger LangGraph workflow
+                        await self._run_langgraph_workflow(transcript)
+            
+        elif event_type == "error":
+            # Handle API errors
+            error = event.get("error", {})
+            error_message = error.get("message", "Unknown error")
+            print(f"[{get_timestamp()}] ❌ API Error: {error_message}")
             
     async def _audio_input_loop(self):
         """Stream microphone audio to WebSocket."""
@@ -267,7 +359,11 @@ class VoiceAgent:
                 await self._handle_websocket_event(event)
             except Exception as e:
                 if self._is_running:
+                    import traceback
                     print(f"⚠️ WebSocket error: {e}")
+                    print(f"🐛 DEBUG: Full traceback:")
+                    print(traceback.format_exc())
+                    print(f"🐛 DEBUG: Last event type: {event.get('type', 'unknown') if 'event' in locals() else 'N/A'}")
                 break
                 
     async def _display_json_loop(self):

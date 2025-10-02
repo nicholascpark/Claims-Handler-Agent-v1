@@ -20,29 +20,47 @@ from .tools import submit_claim_payload, get_human_contact
 from .utils import get_current_time_context, parse_relative_time
 
 
+def _should_escalate_from_input(user_input: str, state: VoiceAgentState) -> bool:
+    """Centralized escalation detection for user input.
+    
+    Checks for explicit escalation requests in user message.
+    Returns True if escalation keywords detected.
+    """
+    escalation_keywords = [
+        "human", "person", "representative", "agent", "operator", 
+        "speak to someone", "talk to someone", "real person",
+        "transfer me", "connect me"
+    ]
+    
+    user_input_lower = user_input.lower()
+    return any(keyword in user_input_lower for keyword in escalation_keywords)
+
+
 # Initialize LLM for supervisor (not using Realtime API)
 supervisor_llm = AzureChatOpenAI(
     azure_deployment=voice_settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME,
     azure_endpoint=voice_settings.AZURE_OPENAI_ENDPOINT,
     api_key=voice_settings.AZURE_OPENAI_API_KEY,
     api_version=voice_settings.AZURE_OPENAI_CHAT_API_VERSION,
-    temperature=0.7,
-    model_name="gpt-4"
+    temperature=0.7
 )
 
 # Initialize trustcall extractor with PropertyClaim schema
 # Trustcall handles extraction agentically without explicit extraction logic
+# Note: We use single-schema mode (no enable_inserts) since we're updating ONE claim at a time
 trustcall_extractor = create_extractor(
     supervisor_llm,
     tools=[PropertyClaim],
     tool_choice="PropertyClaim"
+    # enable_inserts=True is for managing MULTIPLE instances (e.g., list of Person objects)
+    # We're managing a SINGLE PropertyClaim, so we don't need it
 )
 
 
 async def voice_input_node(state: VoiceAgentState) -> VoiceAgentState:
-    """Process the latest user message and route for extraction.
+    """Process the latest user message and prepare for routing.
     
-    Always extracts on new user input to keep the payload up to date.
+    Sets up context but doesn't dictate routing - that's handled by edges.
     """
     # Find the latest human message
     msgs = state.get("messages", [])
@@ -54,116 +72,122 @@ async def voice_input_node(state: VoiceAgentState) -> VoiceAgentState:
 
     if not user_input.strip():
         state["error"] = "No user message to process"
-        state["next_action"] = "respond"
         return state
 
     # Reset error and set timestamp
     state["error"] = None
     state["retry_count"] = 0
     state["timestamp"] = datetime.now().isoformat()
-
-    # Always extract on any new user input
-    state["next_action"] = "extract"
+    
+    # Check for explicit escalation request using centralized detection
+    if _should_escalate_from_input(user_input, state):
+        state["escalation_requested"] = True
+        print(f"[VOICE_INPUT] 🚨 Escalation detected in user message")
+    
+    # Note: Routing decision (extract vs skip) is made in edges.py
+    # based on whether claim is already submitted
     return state
 
 
 async def extraction_worker_node(state: VoiceAgentState) -> VoiceAgentState:
     """Extract structured claim data from user input using trustcall.
     
-    Trustcall handles extraction agentically with the PropertyClaim schema,
-    including automatic validation and patching.
+    Uses trustcall with extended conversation history to extract and merge claim data.
+    Implements smart merging to preserve existing data.
     """
     try:
-        # Latest user input from messages
+        # Get conversation messages
         msgs = state.get("messages", [])
-        user_input = ""
-        for m in reversed(msgs):
-            if isinstance(m, HumanMessage):
-                user_input = m.content or ""
-                break
         existing_data = state.get("claim_data", {})
+        
+        # Build conversation history for trustcall (EXPANDED to last 10 messages for better context)
+        conversation_messages = []
+        for mm in msgs[-20:]:
+            if isinstance(mm, HumanMessage):
+                conversation_messages.append(f"User: {mm.content}")
+            elif isinstance(mm, AIMessage) and mm.content:
+                conversation_messages.append(f"Assistant: {mm.content}")
+        
+        conversation_history = "\n".join(conversation_messages).strip()
         
         # Get timezone-aware time context
         timezone = state.get("current_timezone", "America/Toronto")
         time_context = get_current_time_context(timezone)
         
-        # Check for relative time references
-        relative_time = parse_relative_time(user_input, timezone)
+        # Check for relative time references in latest message
+        latest_user_input = ""
+        for m in reversed(msgs):
+            if isinstance(m, HumanMessage):
+                latest_user_input = m.content or ""
+                break
         
-        # Build conversation context with time awareness (last 5 messages)
-        context_messages = [time_context["context_string"]]
+        relative_time = parse_relative_time(latest_user_input, timezone)
+        
+        # Build extraction prompt with conversation context
+        extraction_context = f"""Current time: {time_context["context_string"]}
+
+Recent conversation:
+{conversation_history}"""
+        
         if relative_time:
-            # Include both date and time if available
-            time_info = f"Note: User mentioned '{relative_time.get('reference', '')}'"
+            time_info = f"\nParsed time reference: '{relative_time.get('reference', '')}'"
             if relative_time.get('date'):
-                time_info += f" which is {relative_time['date']}"
+                time_info += f" = {relative_time['date']}"
             if relative_time.get('time'):
                 time_info += f" at {relative_time['time']}"
-            if relative_time.get('time_reference'):
-                time_info += f" (time reference: '{relative_time['time_reference']}')"
-            context_messages.append(time_info)
-        for mm in msgs[-5:]:
-            if isinstance(mm, HumanMessage):
-                context_messages.append(f"user: {mm.content}")
-            else:
-                try:
-                    # AIMessage or others
-                    if hasattr(mm, 'content') and mm.content:
-                        context_messages.append(f"assistant: {mm.content}")
-                except Exception:
-                    pass
-        conversation_context = "\n".join(context_messages)
+            extraction_context += time_info
         
-        # Build messages for trustcall extractor
-        messages = [
-            {
-                "role": "user",
-                "content": f"""Extract property claim information from this conversation.
+        extraction_prompt = f"""{extraction_context}
 
-CRITICAL EXTRACTION RULES:
-1. ONLY extract information explicitly stated by the user
-2. Pay special attention to the Context section which contains parsed date/time information
-3. If the context mentions a specific date from a relative reference (e.g., "yesterday"), use that date
-4. If the context mentions a specific time from a relative reference (e.g., "around this time"), use that time
-5. DO NOT create placeholder values like "unspecified" or "unknown" - leave empty instead
-6. DO NOT fill in fields based on assumptions - only use actual user statements
-7. For location, ONLY extract if user provides a specific place - never use placeholders
-
-Context:
-{conversation_context}
-
-Current user message: {user_input}
-
-Extract ONLY what the user explicitly mentioned into these structures:
-- claimant: insured_name, insured_phone, policy_number
-- incident: incident_date (YYYY-MM-DD, extract from context if mentioned), incident_time (HH:MM, extract from context if mentioned), incident_location (specific place only), incident_description
-- property_damage: property_type, points_of_impact, damage_description, estimated_damage_severity, additional_details
-
-If a field is not mentioned, leave it empty or null."""
-            }
-        ]
+Extract claim information into the PropertyClaim schema with careful attention to field classification."""
         
-        # Use trustcall to extract and patch claim data
-        # If we have existing data, pass it for patching
+        # Print trustcall input for debugging
+        print("\n" + "="*80)
+        print("TRUSTCALL INPUT:")
+        print("="*80)
+        print(extraction_prompt.strip())
+        print("="*80 + "\n")
+        
+        # Use trustcall with existing data for intelligent patching
         invoke_params = {
-            "messages": [("user", messages[0]["content"])],
+            "messages": [("user", extraction_prompt)],
             "existing": {"PropertyClaim": existing_data if existing_data else PropertyClaim.create_empty().model_dump()},
         }
         
         result = trustcall_extractor.invoke(invoke_params)
         
-        # Get the extracted PropertyClaim
+        # Smart merge: only update if we got meaningful new data
         if result.get("responses"):
             extracted_claim = result["responses"][0]
-            state["claim_data"] = extracted_claim.model_dump() if hasattr(extracted_claim, 'model_dump') else extracted_claim
+            new_data = extracted_claim.model_dump() if hasattr(extracted_claim, 'model_dump') else extracted_claim
+            
+            # Check if extraction actually found new content
+            # (trustcall may return mostly-empty structure when no new info is present)
+            def has_real_content(data):
+                """Check if data has actual meaningful content beyond empty strings/None."""
+                if not data:
+                    return False
+                if isinstance(data, dict):
+                    for v in data.values():
+                        if has_real_content(v):
+                            return True
+                    return False
+                elif isinstance(data, list):
+                    return len(data) > 0 and any(has_real_content(item) for item in data)
+                elif isinstance(data, str):
+                    return bool(data.strip())
+                else:
+                    return data is not None
+            
+            # Always update claim_data (trustcall handles merging via "existing")
+            state["claim_data"] = new_data
+            print(f"[EXTRACTION] ✅ Trustcall completed extraction/merge")
         else:
-            state["error"] = "No data extracted"
+            print(f"[EXTRACTION] ⚠️ No extraction result from trustcall")
             
     except Exception as e:
+        print(f"[EXTRACTION] ❌ Error: {e}")
         state["error"] = f"Extraction failed: {str(e)}"
-    
-    # Always go to supervisor after extraction
-    state["next_action"] = "respond"
     
     return state
 
@@ -171,10 +195,76 @@ If a field is not mentioned, leave it empty or null."""
 async def supervisor_node(state: VoiceAgentState) -> VoiceAgentState:
     """Supervisor agent that orchestrates the conversation flow.
     
-    Validates completeness, asks empathetically for the next missing field,
-    and emits an AI message via messages aggregator.
+    Generates natural conversational responses while tracking claim completeness.
+    CRITICAL: Only adds actual conversation to messages, never JSON dumps.
     """
     try:
+        # First: process outputs from tool nodes (submission/handoff) and generate user-facing messages
+        # This ensures tool outputs are converted to messages centrally in the supervisor
+        if state.get("submission_result") and not state.get("submission_announced"):
+            # Prefer the tool-provided summary for determinism; fallback to LLM if missing
+            submission_result = state.get("submission_result", {})
+            completion_message = submission_result.get("summary_two_sentences")
+            if not completion_message:
+                claim_data = state.get("claim_data", {})
+                summary_messages = [
+                    SystemMessage(content=f"""You are {voice_settings.AGENT_NAME}, providing a final summary after successfully submitting a claim.
+Your tone should be:
+- Warm, reassuring, and professional
+- Brief but comprehensive (exactly 2 sentences)
+- Include the claim number and next steps
+
+The caller has just completed their claim intake process and you need to provide closure with confidence that they're in good hands."""),
+                    HumanMessage(content=f"""Generate a final summary message for the completed claim submission.
+
+Claim data submitted:
+{json.dumps(claim_data, indent=2)}
+
+Submission result:
+- Claim ID: {submission_result.get('claim_id')}
+- Status: {submission_result.get('status')}
+- Next steps: {submission_result.get('next_steps', 'A claims adjuster will contact you within 24-48 hours.')}
+
+Provide a warm, reassuring 2-sentence summary that:
+1. First sentence: Acknowledges the completion and mentions the claim number
+2. Second sentence: Provides next steps and reassurance
+
+Use the caller's name if available in the claim data.""")
+                ]
+                try:
+                    summary_response = await supervisor_llm.ainvoke(summary_messages)
+                    completion_message = summary_response.content.strip()
+                except Exception:
+                    completion_message = (
+                        f"Thank you for providing all the details. I've submitted your claim as {submission_result.get('claim_id')}. "
+                        f"A claims adjuster will contact you within 24-48 hours."
+                    )
+
+            state["messages"] = [AIMessage(content=completion_message)]
+            state["submission_announced"] = True
+            return state
+
+        if state.get("handoff_info") and not state.get("handoff_acknowledged"):
+            # Build a clear, personalized handoff message using stored tool output
+            handoff = state.get("handoff_info", {})
+            phone = handoff.get("phone_number", "877-624-7775")
+            hours = handoff.get("hours", "24/7")
+            notes = handoff.get("notes", "")
+            claim_data = state.get("claim_data", {})
+            caller_name = claim_data.get("claimant", {}).get("insured_name", "")
+            name_part = f"{caller_name}, " if caller_name else ""
+
+            message = (
+                f"I understand, {name_part}you'd like to speak with a human representative. "
+                f"You can reach our Claims team directly at {phone} (available {hours}). "
+            )
+            if notes:
+                message += notes
+
+            state["messages"] = [AIMessage(content=message)]
+            state["handoff_acknowledged"] = True
+            return state
+
         # Get current claim data
         claim_data = state.get("claim_data", {})
         
@@ -190,177 +280,143 @@ async def supervisor_node(state: VoiceAgentState) -> VoiceAgentState:
         
         state["is_claim_complete"] = is_complete
         
-        # If claim is complete, route directly to submission without generating a response
-        # The submission_node will generate the final message with claim ID
-        if is_complete:
-            state["next_action"] = "submit"
+        # If claim is complete, routing will handle submission
+        # Just log it here; actual summary message will be generated after submission tool runs
+        if is_complete and not state.get("submission_result"):
+            print(f"[SUPERVISOR] ✅ Claim is complete. Routing will go to submission.")
             return state
         
-        # Get user-friendly field descriptions
-        field_descriptions = dict(PropertyClaim.get_field_collection_order())
-        # Focus conversation on the NEXT missing field in the defined order
-        if missing_fields:
-            ordered_fields = [f for f, _ in PropertyClaim.get_field_collection_order()]
-            next_missing = next((f for f in ordered_fields if f in missing_fields), missing_fields[0])
-            missing_friendly = [field_descriptions.get(next_missing, next_missing)]
-        else:
-            missing_friendly = []
-        
-        # Serialize recent conversation from messages
+        # Get conversation history (actual messages only, last 10)
         msgs = state.get("messages", [])
-        recent_serialized = []
-        for m in msgs[-10:]:
+        conversation_summary = []
+        for m in msgs[-20:]:
             if isinstance(m, HumanMessage):
-                recent_serialized.append({"role": "user", "content": m.content})
-            elif hasattr(m, "content"):
-                recent_serialized.append({"role": "assistant", "content": m.content})
+                conversation_summary.append(f"User: {m.content}")
+            elif isinstance(m, AIMessage) and m.content:
+                conversation_summary.append(f"Assistant: {m.content}")
+        
+        conversation_text = "\n".join(conversation_summary)
+        
+        # If escalation was already requested in voice_input, supervisor will still run
+        # but routing will handle sending to get_human_representative node
+        # No need to generate message here - let the handoff node handle it
+        if state.get("escalation_requested"):
+            print(f"[SUPERVISOR] 🔔 Escalation already flagged, will route to handoff")
+            return state
+        
+        # Get friendly field names for missing fields
+        field_descriptions = dict(PropertyClaim.get_field_collection_order())
+        missing_friendly = [field_descriptions.get(f, f) for f in missing_fields]
+        
+        # Identify the NEXT field to collect (first in the missing list)
+        next_field_to_collect = missing_friendly[0] if missing_friendly else None
+        
+        # Build explicit missing fields guidance
+        if missing_friendly:
+            missing_fields_guidance = f"""
+MISSING FIELDS TO COLLECT (in priority order):
+1. **NEXT FIELD TO ASK FOR**: {next_field_to_collect}
+2. Then collect: {', '.join(missing_friendly[1:4])}
+{f"   ... and {len(missing_friendly) - 4} more fields" if len(missing_friendly) > 4 else ""}
 
-        messages = [
-            SystemMessage(content=Prompts.get_supervisor_system_prompt()),
-            HumanMessage(content=f"""
-Current claim data:
+INSTRUCTION: Focus your next question on collecting the NEXT FIELD ({next_field_to_collect}) in a natural, conversational way.
+"""
+        else:
+            missing_fields_guidance = "All required fields are collected! The claim should be complete."
+        
+        # Build supervisor prompt (this is INTERNAL, not added to conversation messages)
+        supervisor_prompt = f"""Recent conversation:
+{conversation_text}
+
+Current claim data summary:
 {json.dumps(claim_data, indent=2)}
 
-Complete: {is_complete}
-Missing fields (next): {', '.join(missing_friendly) if missing_friendly else 'None'}
+{missing_fields_guidance}
 
-Recent conversation:
-{json.dumps(recent_serialized, indent=2)}
+CRITICAL VALIDATION:
+- Review the conversation history above
+- ONLY acknowledge information that was ACTUALLY mentioned in the conversation
+- If a field has data in JSON but wasn't mentioned in the conversation, the user hasn't provided it yet
+- Example: If JSON shows phone="555-1234" but conversation doesn't mention a phone number, DON'T say "thank you for providing your phone"
+- FOCUS ON COLLECTING THE NEXT MISSING FIELD IF NOT N/A: {next_field_to_collect if next_field_to_collect else 'N/A'}
 
-IMPORTANT GUIDELINES FOR YOUR RESPONSE:
-1. Begin with a warm, empathetic acknowledgement (use the caller's name if present).
-2. Ask for only the single next missing field shown above.
-3. Do not claim we have info unless it appears in the JSON.
-4. Do not ask for documents or anything non-verbal.
-
-Based on this information, provide:
-1. A natural, conversational response for the voice agent to speak
-2. Whether we need to escalate to a human agent
-
-Format your response as JSON:
+Generate your response as JSON:
 {{
-    "next_message": "Your response here",
+    "next_message": "Your natural, conversational response that asks for the next missing field",
     "should_escalate": false,
-    "confidence": 0.95,
-    "reasoning": "Brief explanation"
-}}
-""")
+    "reasoning": "Why you chose this response and which field you're asking for"
+}}"""
+        
+        # Call LLM with system prompt + analysis prompt (INTERNAL - not added to state messages)
+        internal_messages = [
+            SystemMessage(content=Prompts.get_supervisor_system_prompt()),
+            HumanMessage(content=supervisor_prompt)
         ]
         
-        # Get supervisor decision
-        response = await supervisor_llm.ainvoke(messages)
+        response = await supervisor_llm.ainvoke(internal_messages)
         
         # Parse response
         try:
             decision = json.loads(response.content)
         except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
+            print(f"[SUPERVISOR] ⚠️ Failed to parse JSON from LLM response")
             decision = {
-                "next_message": str(response.content),
+                "next_message": "I'm here to help with your claim. Could you tell me what happened?",
                 "should_escalate": False,
-                "confidence": 0.5,
-                "reasoning": "Failed to parse supervisor response"
+                "reasoning": "JSON parse failure - using fallback"
             }
         
-        # Emit assistant message via messages aggregator
-        state["messages"] = [AIMessage(content=decision["next_message"])]
+        print(f"[SUPERVISOR] Decision - escalate: {decision.get('should_escalate', False)}")
+        print(f"[SUPERVISOR] Reasoning: {decision.get('reasoning', 'No reasoning')[:100]}")
         
+        # Handle escalation from LLM decision
         if decision.get("should_escalate", False):
-            state["next_action"] = "escalate"
-        else:
-            state["next_action"] = "respond"
+            state["escalation_requested"] = True
+            print(f"[SUPERVISOR] 🔔 LLM detected escalation request")
+        
+        # Add ONLY the conversation message to state (this goes into the conversation history)
+        state["messages"] = [AIMessage(content=decision["next_message"])]
             
     except Exception as e:
         # Fallback response on error
+        print(f"[SUPERVISOR] ❌ Error: {e}")
         state["error"] = f"Supervisor error: {str(e)}"
         state["messages"] = [AIMessage(content=Prompts.get_error_recovery_prompt("default"))]
-        state["next_action"] = "respond"
         
     return state
 
 
 async def get_human_representative(state: VoiceAgentState) -> VoiceAgentState:
-    """Invoke human contact tool and generate a handoff message.
+    """Invoke human contact tool and store handoff info for supervisor to render.
 
-    This replaces ad-hoc response generation for human escalation.
+    This node is a pure tool node. The supervisor will generate the user-facing message.
     """
+    print(f"[ESCALATION] 🔄 Initiating human representative handoff")
     contact = get_human_contact.invoke({})
-    phone = contact.get("phone_number", "877-624-7775")
-    hours = contact.get("hours", "24/7")
-    state["messages"] = [AIMessage(content=(
-        f"I understand you'd like to speak with a human representative. "
-        f"You can reach our Claims team at {phone} ({hours}). "
-        f"I'll also note your request to escalate this call."
-    ))]
-    state["next_action"] = "complete"
+    state["handoff_info"] = contact
+    # Clear escalation flag to avoid loops; supervisor will acknowledge handoff
+    state["escalation_requested"] = False
+    print(f"[ESCALATION] 📞 Contact info retrieved: {contact}")
     return state
 
 
 async def submission_node(state: VoiceAgentState) -> VoiceAgentState:
     """Submit the completed claim payload.
     
-    This node is triggered when PropertyClaim.is_complete() returns True.
-    It calls the submit_claim_payload tool to finalize the claim and generates
-    a warm summary using the supervisor LLM.
+    Pure tool node: call the submission tool, store results, and defer messaging to the supervisor.
     """
     try:
         claim_data = state.get("claim_data", {})
-        
-        # Submit the completed claim payload
+        print(f"[SUBMISSION] 📝 Submitting completed claim for: {claim_data.get('claimant', {}).get('insured_name', 'Unknown')}")
         submission_result = submit_claim_payload.invoke({"claim_payload": claim_data})
-        
-        # Update state with submission results
+        print(f"[SUBMISSION] ✅ Claim submitted successfully. Claim ID: {submission_result.get('claim_id')}")
         state["claim_data"]["claim_id"] = submission_result.get("claim_id")
         state["submission_result"] = submission_result
-        state["next_action"] = "complete"
-        
-        # Generate a warm, personalized summary using supervisor LLM
-        summary_messages = [
-            SystemMessage(content=f"""You are {voice_settings.AGENT_NAME}, providing a final summary after successfully submitting a claim.
-Your tone should be:
-- Warm, reassuring, and professional
-- Brief but comprehensive (exactly 2 sentences)
-- Include the claim number and next steps
-
-The caller has just completed their claim intake process and you need to provide closure with confidence that they're in good hands."""),
-            HumanMessage(content=f"""Generate a final summary message for the completed claim submission.
-
-Claim data submitted:
-{json.dumps(claim_data, indent=2)}
-
-Submission result:
-- Claim ID: {submission_result.get('claim_id')}
-- Status: {submission_result.get('status')}
-- Next steps: {submission_result.get('next_steps', 'A claims adjuster will contact you within 24-48 hours.')}
-
-Provide a warm, reassuring 2-sentence summary that:
-1. First sentence: Acknowledges the completion and mentions the claim number
-2. Second sentence: Provides next steps and reassurance
-
-Use the caller's name if available in the claim data.""")
-        ]
-        
-        try:
-            summary_response = await supervisor_llm.ainvoke(summary_messages)
-            completion_message = summary_response.content.strip()
-        except Exception as e:
-            # Fallback message if LLM fails
-            completion_message = (
-                f"Thank you for providing all the details about your claim. "
-                f"I've successfully submitted everything with claim number {submission_result.get('claim_id')}, "
-                f"and {submission_result.get('next_steps', 'a claims adjuster will contact you within 24-48 hours')}"
-            )
-        
-        state["messages"] = [AIMessage(content=completion_message)]
-        
+        state["submission_announced"] = False
     except Exception as e:
+        print(f"[SUBMISSION] ❌ Error: {e}")
         state["error"] = f"Failed to submit claim: {str(e)}"
-        state["messages"] = [AIMessage(content=(
-            "I've collected your information, but there was an issue submitting it. "
-            "Let me transfer you to a specialist who can help."
-        ))]
-        state["next_action"] = "escalate"
-    
+        state["escalation_requested"] = True
     return state
 
 
@@ -372,17 +428,20 @@ async def error_handling_node(state: VoiceAgentState) -> VoiceAgentState:
     error = state.get("error", "Unknown error")
     retry_count = state.get("retry_count", 0)
     
+    print(f"[ERROR_HANDLER] Handling error (retry {retry_count}): {error}")
+    
     # Increment retry count
     state["retry_count"] = retry_count + 1
     
     # Provide appropriate error recovery message
     if retry_count >= 3:
+        print(f"[ERROR_HANDLER] Max retries reached, escalating")
         state["messages"] = [AIMessage(content=(
             "I apologize for the technical difficulties. "
             "Let me transfer you to a specialist who can help you better. "
             "Please hold for a moment."
         ))]
-        state["next_action"] = "escalate"
+        state["escalation_requested"] = True
     else:
         error_type = "default"
         if "extraction" in str(error).lower():
@@ -391,7 +450,6 @@ async def error_handling_node(state: VoiceAgentState) -> VoiceAgentState:
             error_type = "connection_error"
             
         state["messages"] = [AIMessage(content=Prompts.get_error_recovery_prompt(error_type))]
-        state["next_action"] = "respond"
     
     # Clear error for next iteration
     state["error"] = None

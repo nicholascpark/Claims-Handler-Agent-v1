@@ -14,10 +14,12 @@ graph TD;
 	__end__([<p>__end__</p>]):::last
 	__start__ --> voice_input;
 	error_handler -. &nbsp;end&nbsp; .-> __end__;
+	error_handler -.-> get_human_representative;
 	error_handler -.-> supervisor;
 	extraction_worker -.-> error_handler;
 	extraction_worker -.-> supervisor;
-	get_human_representative -. &nbsp;end&nbsp; .-> __end__;
+	get_human_representative --> supervisor;
+	submission --> supervisor;
 	supervisor -. &nbsp;end&nbsp; .-> __end__;
 	supervisor -.-> error_handler;
 	supervisor -.-> get_human_representative;
@@ -25,7 +27,6 @@ graph TD;
 	voice_input -.-> error_handler;
 	voice_input -.-> extraction_worker;
 	voice_input -.-> supervisor;
-	submission --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

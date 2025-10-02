@@ -115,35 +115,40 @@ class PropertyClaim(BaseModel):
             return False
 
     def get_missing_fields(self) -> List[str]:
-        """Get list of missing required intake fields (claim_id not required for new claims)."""
+        """Get list of missing required intake fields (claim_id not required for new claims).
+        
+        RELAXED VALIDATION: Only checks if field has ANY content (not empty/null).
+        Does not validate quality or correctness - this prevents the agent from obsessing
+        over fields that may have been misclassified but still have data.
+        """
         missing = []
         
-        # Helper to check if value is valid (not empty and not a placeholder)
-        def is_valid_value(value: str) -> bool:
-            if not value or not str(value).strip():
+        # Relaxed helper: only check if field has ANY non-empty content
+        def has_content(value: str) -> bool:
+            """Check if field has any content at all (not empty, not None)."""
+            if value is None:
                 return False
-            value_lower = str(value).lower().strip()
-            # Reject placeholder values
-            placeholders = ['unspecified', 'unknown', 'not provided', 'n/a', 'none', 'tbd', 'to be determined']
-            return not any(placeholder in value_lower for placeholder in placeholders)
+            if isinstance(value, str):
+                return bool(value.strip())
+            return True
         
         try:
             # Check claimant fields
-            if not is_valid_value(self.claimant.insured_name):
+            if not has_content(self.claimant.insured_name):
                 missing.append('claimant.insured_name')
-            if not is_valid_value(self.claimant.insured_phone):
+            if not has_content(self.claimant.insured_phone):
                 missing.append('claimant.insured_phone')
             
             # Check incident fields
-            if not is_valid_value(self.incident.incident_date):
+            if not has_content(self.incident.incident_date):
                 missing.append('incident.incident_date')
-            if not is_valid_value(self.incident.incident_time):
+            if not has_content(self.incident.incident_time):
                 missing.append('incident.incident_time')
-            if not is_valid_value(self.incident.incident_location.incident_street_address):
+            if not has_content(self.incident.incident_location.incident_street_address):
                 missing.append('incident.incident_location.incident_street_address')
-            if not is_valid_value(self.incident.incident_location.incident_zip_code):
+            if not has_content(self.incident.incident_location.incident_zip_code):
                 missing.append('incident.incident_location.incident_zip_code')
-            if not is_valid_value(self.incident.incident_description):
+            if not has_content(self.incident.incident_description):
                 missing.append('incident.incident_description')
             
             # Check if at least one of personal_injury or property_damage is present
@@ -154,20 +159,20 @@ class PropertyClaim(BaseModel):
             if has_injury_data:
                 if not self.personal_injury.points_of_impact or len(self.personal_injury.points_of_impact) == 0:
                     missing.append('personal_injury.points_of_impact')
-                if not is_valid_value(self.personal_injury.injury_description):
+                if not has_content(self.personal_injury.injury_description):
                     missing.append('personal_injury.injury_description')
-                if not is_valid_value(self.personal_injury.severity):
+                if not has_content(self.personal_injury.severity):
                     missing.append('personal_injury.severity')
             
             # Check property damage fields if present
             if has_damage_data:
-                if not is_valid_value(self.property_damage.property_type):
+                if not has_content(self.property_damage.property_type):
                     missing.append('property_damage.property_type')
                 if not self.property_damage.points_of_impact or len(self.property_damage.points_of_impact) == 0:
                     missing.append('property_damage.points_of_impact')
-                if not is_valid_value(self.property_damage.damage_description):
+                if not has_content(self.property_damage.damage_description):
                     missing.append('property_damage.damage_description')
-                if not is_valid_value(self.property_damage.estimated_damage_severity):
+                if not has_content(self.property_damage.estimated_damage_severity):
                     missing.append('property_damage.estimated_damage_severity')
             
             # If neither injury nor damage is specified, we need to know which one applies

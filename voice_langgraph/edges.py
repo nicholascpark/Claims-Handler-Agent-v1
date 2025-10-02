@@ -1,7 +1,7 @@
 """Edge definitions and routing logic for the LangGraph voice agent workflow.
 
 This module defines the conditional edges and routing decisions in the graph.
-Uses PropertyClaim.is_complete() to trigger submission_node routing.
+Routes based on STATE CONDITIONS, not explicit next_action flags.
 """
 
 from typing import Literal
@@ -12,20 +12,30 @@ from .schema import PropertyClaim
 def route_after_input(state: VoiceAgentState) -> Literal["extraction_worker", "supervisor", "error_handler"]:
     """Route after processing voice input.
     
-    Determines whether to:
-    - Extract data from the user message
-    - Go directly to supervisor for response
-    - Handle an error condition
+    Routes based on state conditions:
+    - error -> error_handler
+    - escalation_requested -> supervisor (will handle escalation)
+    - claim already submitted -> supervisor (skip extraction)
+    - otherwise -> extraction_worker
     """
     if state.get("error"):
+        print(f"[ROUTING] Error detected, routing to error_handler")
         return "error_handler"
     
-    next_action = state.get("next_action", "respond")
-    
-    if next_action == "extract":
-        return "extraction_worker"
-    else:
+    # If escalation requested, skip extraction and go straight to supervisor
+    if state.get("escalation_requested"):
+        print(f"[ROUTING] Escalation requested, skipping extraction")
         return "supervisor"
+    
+    # Check if claim is already submitted (has claim_id)
+    claim_data = state.get("claim_data", {})
+    if claim_data.get("claim_id"):
+        print(f"[ROUTING] ⚠️ Claim already submitted (ID: {claim_data['claim_id']}), skipping extraction")
+        return "supervisor"
+    
+    # Normal flow: extract from user message
+    print(f"[ROUTING] Routing to extraction")
+    return "extraction_worker"
 
 
 def route_after_extraction(state: VoiceAgentState) -> Literal["supervisor", "error_handler"]:
@@ -34,73 +44,55 @@ def route_after_extraction(state: VoiceAgentState) -> Literal["supervisor", "err
     Always go to supervisor unless there's an error.
     """
     if state.get("error"):
+        print(f"[ROUTING] Error after extraction, routing to error_handler")
         return "error_handler"
     
+    print(f"[ROUTING] Extraction complete, routing to supervisor")
     return "supervisor"
 
 
 def route_after_supervisor(state: VoiceAgentState) -> Literal["submission", "get_human_representative", "end", "error_handler"]:
     """Route after supervisor makes decision.
 
-    Determines whether to:
-    - Submit claim (if complete)
-    - Escalate to human representative (if requested)
-    - End the workflow (continue conversation on next user input)
-    - Handle an error
+    Routes based on state conditions:
+    - error -> error_handler
+    - is_claim_complete=True -> submission
+    - escalation_requested=True -> get_human_representative
+    - otherwise -> end (wait for next user input)
     """
     if state.get("error"):
+        print(f"[ROUTING] Error detected, routing to error_handler")
         return "error_handler"
 
-    next_action = state.get("next_action", "respond")
-
-    if next_action == "submit":
+    # Check if claim is complete and not already submitted this turn
+    # Avoid repeated submissions if submission_result already exists
+    if state.get("is_claim_complete") and not state.get("submission_result"):
+        print(f"[ROUTING] ✅ Claim complete, routing to submission")
         return "submission"
-    elif next_action == "escalate":
+    
+    # Check if escalation was requested
+    if state.get("escalation_requested"):
+        print(f"[ROUTING] 🔄 Escalation requested, routing to get_human_representative")
         return "get_human_representative"
-    else:
-        # Supervisor has emitted message via add_messages; end this turn
-        return "end"
+    
+    # Normal flow: supervisor generated response, end this turn
+    print(f"[ROUTING] 💬 Normal response, ending turn")
+    return "end"
 
 
-def route_after_error(state: VoiceAgentState) -> Literal["end", "supervisor"]:
+def route_after_error(state: VoiceAgentState) -> Literal["end", "supervisor", "get_human_representative"]:
     """Route after error handling.
     
-    Determines whether to:
-    - End the workflow (for escalations)
-    - Try again with supervisor
+    Routes based on state conditions:
+    - escalation_requested -> get_human_representative
+    - otherwise -> end (wait for next user input)
     """
-    next_action = state.get("next_action", "respond")
+    if state.get("escalation_requested"):
+        print(f"[ROUTING] Error handler requested escalation")
+        return "get_human_representative"
     
-    if next_action == "escalate":
-        return "end"
-    else:
-        # Try to recover by going to supervisor
-        return "supervisor"
-
-
-def should_continue_conversation(state: VoiceAgentState) -> bool:
-    """Determine if the conversation should continue.
-    
-    Returns False if:
-    - Claim is complete (using PropertyClaim.is_complete())
-    - Escalation is needed
-    - Maximum retries exceeded
-    """
-    # Check completeness using PropertyClaim schema
-    claim_data = state.get("claim_data", {})
-    try:
-        claim = PropertyClaim(**claim_data) if claim_data else None
-        if claim and claim.is_complete():
-            return False
-    except Exception:
-        pass  # Claim data not valid yet, continue conversation
-    
-    if state.get("next_action") == "escalate":
-        return False
-    
-    if state.get("retry_count", 0) >= 3:
-        return False
-    
-    return True
+    # End turn, let user try again
+    print(f"[ROUTING] Error handled, ending turn")
+    return "end"
 
 

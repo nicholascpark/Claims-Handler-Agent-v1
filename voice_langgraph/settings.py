@@ -72,13 +72,18 @@ class VoiceAgentSettings(BaseSettings):
     
     # Transcription Settings
     TRANSCRIPTION_MODEL: str = Field(
-        default="whisper-1",
+        default="gpt-4o-transcribe",
         description="Transcription model to use"
     )
     
     TRANSCRIPTION_LANGUAGE: str = Field(
         default="en",
         description="Language for transcription"
+    )
+
+    TRANSCRIPTION_PROMPT: str = Field(
+        default="Expect discussion related to insurance claims, property damage, personal injury, personal information, policy, date and time of the incident, phone number, address and other descriptive information regarding the damage and claim.",
+        description="Prompt for transcription"
     )
     
     # Azure OpenAI Settings (from environment variables)
