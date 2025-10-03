@@ -4,6 +4,7 @@ Audio processing, WebSocket handling, and other utility functions.
 """
 
 import asyncio
+import atexit
 import base64
 import json
 import ssl
@@ -207,6 +208,8 @@ class WebSocketManager:
         self.session: Optional[ClientSession] = None
         self.ws: Optional[ClientWebSocketResponse] = None
         self._is_connected = False
+        # Best-effort cleanup to reduce "Unclosed client session" warnings on abrupt exits
+        atexit.register(self._atexit_close)
         
     def get_headers(self) -> Dict[str, str]:
         """Get WebSocket headers."""
@@ -267,6 +270,25 @@ class WebSocketManager:
         if self.session is not None:
             await self.session.close()
             self.session = None
+
+    def _atexit_close(self):
+        """Ensure session is closed at interpreter exit (best-effort)."""
+        try:
+            if self.session is None and self.ws is None:
+                return
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule async close without awaiting
+                    loop.create_task(self.close())
+                else:
+                    loop.run_until_complete(self.close())
+            except RuntimeError:
+                # No running loop; create a temporary one
+                asyncio.run(self.close())
+        except Exception:
+            # Swallow errors during interpreter shutdown
+            pass
 
 
 def encode_audio(audio_data: bytes) -> str:

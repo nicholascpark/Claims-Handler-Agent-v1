@@ -8,7 +8,7 @@ This module provides the VoiceAgent class that integrates:
 
 import asyncio
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage, AIMessage
@@ -58,9 +58,18 @@ class VoiceAgent:
         self.conversation_history: List[dict] = []
         # Initialize with empty structure using factory method
         self.current_claim_data: Dict[str, Any] = PropertyClaim.create_empty().model_dump()
+        self._processed_messages = set()  # Track processed messages to avoid duplicates
         self.current_timezone: str = "America/Toronto"  # Default timezone
         self._greeting_sent = False
         self._is_running = False
+        # Turn gating (process first-arriving user input per turn)
+        self._turn_locked: bool = False
+        self._response_in_progress: bool = False  # Prevent overlapping response.create calls
+        self._turn_source: Optional[str] = None  # 'audio' | 'text'
+        # Control whether microphone audio is forwarded to the server
+        self._accept_audio_streaming: bool = True
+        # Pending image attachments to include with the next user message
+        self._attached_images: List[Dict[str, Any]] = []
         
     def _build_ws_url(self) -> str:
         """Build WebSocket URL for Azure OpenAI Realtime API."""
@@ -96,6 +105,51 @@ class VoiceAgent:
                 "silence_duration_ms": voice_settings.VAD_SILENCE_DURATION_MS,
             },
         }
+
+    def _lock_turn(self, source: str):
+        """Lock the conversation turn to the specified source ('audio' or 'text')."""
+        if not self._turn_locked:
+            self._turn_locked = True
+            self._turn_source = source
+            # Pause audio streaming while a turn is being processed
+            self._accept_audio_streaming = False
+            print(f"[{get_timestamp()}] 🔒 Turn locked by {source}")
+
+    def _unlock_turn(self):
+        """Unlock the conversation turn and resume audio streaming."""
+        if self._turn_locked:
+            print(f"[{get_timestamp()}] 🔓 Turn unlocked")
+        self._turn_locked = False
+        self._turn_source = None
+        self._accept_audio_streaming = True
+        # Clear any pending image attachments after a completed turn
+        self._attached_images.clear()
+
+    async def attach_image_from_path(self, file_path: str, mime_type: Optional[str] = None) -> Tuple[bool, str]:
+        """Attach an image from local path to include with the next user message.
+
+        Returns (success, message).
+        """
+        import os
+        import mimetypes
+        try:
+            if not os.path.isfile(file_path):
+                return False, f"File not found: {file_path}"
+            if not mime_type:
+                guessed, _ = mimetypes.guess_type(file_path)
+                mime_type = guessed or "application/octet-stream"
+            with open(file_path, "rb") as f:
+                data = f.read()
+            import base64
+            b64 = base64.b64encode(data).decode("ascii")
+            self._attached_images.append({
+                "type": "input_image",
+                "image": b64,
+                "mime_type": mime_type,
+            })
+            return True, f"Attached image ({mime_type}): {os.path.basename(file_path)}"
+        except Exception as e:
+            return False, f"Failed to attach image: {e}"
         
     async def _run_langgraph_workflow(self, user_message: str):
         """Run the LangGraph workflow with the user's message.
@@ -143,23 +197,19 @@ class VoiceAgent:
             
             # LangGraph orchestrates responses, Realtime speaks them
             if voice_settings.REALTIME_AS_TALKER:
-                # Create a conversation item with the LangGraph-generated response
-                await self.ws_manager.send({
-                    "type": "conversation.item.create",
-                    "item": {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": response_message}]
-                    },
-                })
-                
-                # Trigger response generation for Realtime to speak it
-                await self.ws_manager.send({
-                    "type": "response.create",
-                    "response": {
-                        "tool_choice": "none"
-                    }
-                })
+                # Prefer explicit instructions to make Realtime speak exactly the provided text
+                # Avoid creating an assistant message first to prevent duplicate items
+                if not self._response_in_progress:
+                    self._response_in_progress = True
+                    await self.ws_manager.send({
+                        "type": "response.create",
+                        "response": {
+                            "instructions": response_message,
+                            "tool_choice": "none"
+                        }
+                    })
+                else:
+                    print(f"[{get_timestamp()}] ⚠️ Skipping response.create - already in progress")
             
             # Check if claim is complete
             if result.get("is_claim_complete"):
@@ -188,7 +238,11 @@ class VoiceAgent:
                     "content": [{"type": "text", "text": "I'm here to help with your claim. Could you please tell me what happened?"}]
                 },
             })
-            await self.ws_manager.send({"type": "response.create"})
+            if not self._response_in_progress:
+                self._response_in_progress = True
+                await self.ws_manager.send({"type": "response.create"})
+            else:
+                print(f"[{get_timestamp()}] ⚠️ Skipping response.create - already in progress")
             
     async def _handle_websocket_event(self, event: Dict[str, Any]):
         """Handle incoming WebSocket events.
@@ -212,10 +266,12 @@ class VoiceAgent:
             if not self._greeting_sent:
                 if voice_settings.REALTIME_AS_TALKER:
                     # Let Realtime produce the greeting immediately for minimal latency
-                    await self.ws_manager.send({
-                        "type": "response.create",
-                        "response": {
-                            "instructions": self.instructions + "\n\nStart with the greeting immediately.",
+                    if not self._response_in_progress:
+                        self._response_in_progress = True
+                        await self.ws_manager.send({
+                            "type": "response.create",
+                            "response": {
+                                "instructions": self.instructions + "\n\nStart with the greeting immediately.",
                             "tool_choice": "none"
                         },
                     })
@@ -235,6 +291,7 @@ class VoiceAgent:
         elif event_type == "response.audio_transcript.done":
             # OPTIMIZED: Capture assistant transcript from audio transcript done event
             # This is faster than waiting for content_part.done
+            self._response_in_progress = False  # Reset response flag
             transcript = event.get("transcript", "")
             if transcript and isinstance(transcript, str):
                 transcript = transcript.strip()
@@ -245,6 +302,8 @@ class VoiceAgent:
                         "content": transcript,
                         "timestamp": get_timestamp()
                     })
+                    # Assistant finished speaking; unlock turn for next input
+                    self._unlock_turn()
             else:
                 print(f"[{get_timestamp()}] 🐛 DEBUG: response.audio_transcript.done - transcript is None or not string")
                 
@@ -270,8 +329,10 @@ class VoiceAgent:
             # Cancel VAD-triggered auto-response immediately when speech stops
             # This prevents Realtime from creating its own response
             # LangGraph will generate the intelligent response instead
-            await self.ws_manager.send({"type": "response.cancel"})
-            print(f"[{get_timestamp()}] 🎤 Speech stopped, processing...")
+            if not self._turn_locked:
+                self._lock_turn("audio")
+                await self.ws_manager.send({"type": "response.cancel"})
+                print(f"[{get_timestamp()}] 🎤 Speech stopped, processing...")
                     
         elif event_type == "conversation.item.created":
             # OPTIMIZED: Get user transcripts from conversation items (faster than transcription.completed)
@@ -307,6 +368,23 @@ class VoiceAgent:
                         else:
                             print(f"[{get_timestamp()}] 🐛 DEBUG: Transcript not available yet in conversation.item.created")
                             # Transcript might not be available yet - will be captured by other events
+                    elif content_type == "input_text" or content_type == "text":
+                        # Handle typed text items (from our text input loop or future UIs)
+                        text = content_part.get("text")
+                        if isinstance(text, str) and text.strip():
+                            text = text.strip()
+                            # Create message hash for deduplication
+                            msg_hash = hash(f"user:{text}:{get_timestamp()[:10]}")  # Include minute precision
+                            if msg_hash not in self._processed_messages:
+                                self._processed_messages.add(msg_hash)
+                                print(f"[{get_timestamp()}] 👤 User (typed): {text}")
+                                self.conversation_history.append({
+                                    "role": "user",
+                                    "content": text,
+                                    "timestamp": get_timestamp()
+                                })
+                                await self._run_langgraph_workflow(text)
+                            break
                             
         elif event_type == "input_audio_buffer.committed":
             # Audio buffer committed - speech is ready for processing
@@ -334,8 +412,20 @@ class VoiceAgent:
                         # Trigger LangGraph workflow
                         await self._run_langgraph_workflow(transcript)
             
+        elif event_type == "response.content_part.done":
+            # Ensure turn is unlocked if we missed transcript.done
+            part = event.get("part", {})
+            if part.get("type") == "audio":
+                self._unlock_turn()
+        
+        elif event_type == "response.done":
+            # Fallback unlock when response is fully done
+            self._response_in_progress = False  # Reset response flag
+            self._unlock_turn()
+        
         elif event_type == "error":
             # Handle API errors
+            self._response_in_progress = False  # Reset response flag on error
             error = event.get("error", {})
             error_message = error.get("message", "Unknown error")
             print(f"[{get_timestamp()}] ❌ API Error: {error_message}")
@@ -345,11 +435,73 @@ class VoiceAgent:
         async for audio_chunk in self.audio_processor.stream_microphone():
             if not self._is_running:
                 break
-                
+            if voice_settings.ENABLE_AUDIO_INPUT and self._accept_audio_streaming:
+                await self.ws_manager.send({
+                    "type": "input_audio_buffer.append",
+                    "audio": encode_audio(audio_chunk),
+                })
+
+    async def _text_input_loop(self):
+        """Non-blocking loop to read typed text from stdin and send as a user message.
+        Special commands:
+        - /attach <path> [mime] : attach an image file to the next message
+        - /help : show commands
+        """
+        import sys
+        loop = asyncio.get_event_loop()
+        print("⌨️  Text input enabled. Type a message and press Enter. Use /attach <path> to add an image.")
+        while self._is_running and voice_settings.ENABLE_TEXT_INPUT:
+            try:
+                line = await loop.run_in_executor(None, sys.stdin.readline)
+            except Exception:
+                break
+            if line is None:
+                break
+            text = line.strip()
+            if not text:
+                continue
+            if text.lower().startswith("/help"):
+                print("Commands: /attach <path> [mime]")
+                continue
+            if text.lower().startswith("/attach "):
+                parts = text.split(" ", 2)
+                if len(parts) >= 2:
+                    # parts[1] may include a path with spaces if quoted - keep simple for now
+                    file_and_maybe_mime = parts[1:]
+                    file_path = file_and_maybe_mime[0]
+                    mime = None
+                    if len(file_and_maybe_mime) > 1:
+                        mime = file_and_maybe_mime[1]
+                    ok, msg = await self.attach_image_from_path(file_path, mime)
+                    print(("✅ " if ok else "❌ ") + msg)
+                else:
+                    print("Usage: /attach <path> [mime]")
+                continue
+
+            # If a turn is already locked by audio/text, ignore this entry
+            if self._turn_locked:
+                print("⏳ Busy processing the previous turn. Please wait...")
+                continue
+
+            # Lock turn for text and pause mic streaming
+            self._lock_turn("text")
+
+            # Build user message parts: include text and any attached images
+            content_parts: List[Dict[str, Any]] = [{"type": "input_text", "text": text}]
+            if self._attached_images:
+                content_parts.extend(list(self._attached_images))
+
+            # Send as conversation item
             await self.ws_manager.send({
-                "type": "input_audio_buffer.append",
-                "audio": encode_audio(audio_chunk),
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": content_parts,
+                },
             })
+
+            # No need to call workflow here - conversation.item.created event will handle it
             
     async def _websocket_receive_loop(self):
         """Receive and handle WebSocket messages."""
@@ -385,8 +537,9 @@ class VoiceAgent:
         print("🚀 Starting LangGraph Voice Agent...")
         
         # Select microphone
-        if not self.audio_processor.select_microphone():
-            return
+        if voice_settings.ENABLE_AUDIO_INPUT:
+            if not self.audio_processor.select_microphone():
+                return
             
         # Initialize WebSocket
         ws_url = self._build_ws_url()
@@ -405,6 +558,8 @@ class VoiceAgent:
                 asyncio.create_task(self._audio_input_loop()),
                 asyncio.create_task(self._websocket_receive_loop()),
             ]
+            if voice_settings.ENABLE_TEXT_INPUT:
+                tasks.append(asyncio.create_task(self._text_input_loop()))
             
             if self.display_json:
                 tasks.append(asyncio.create_task(self._display_json_loop()))

@@ -5,6 +5,7 @@ Constructs the complete workflow graph with all nodes and edges.
 
 from typing import Any
 from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 
 from .state import VoiceAgentState
@@ -12,8 +13,6 @@ from .nodes import (
     voice_input_node,
     extraction_worker_node,
     supervisor_node,
-    submission_node,
-    get_human_representative,
     error_handling_node
 )
 from .edges import (
@@ -22,6 +21,7 @@ from .edges import (
     route_after_supervisor,
     route_after_error
 )
+from .tools import submit_claim_payload, get_human_contact
 
 
 def build_voice_agent_graph(with_memory: bool = True) -> Any:
@@ -52,9 +52,9 @@ def build_voice_agent_graph(with_memory: bool = True) -> Any:
     graph.add_node("voice_input", voice_input_node)
     graph.add_node("extraction_worker", extraction_worker_node)
     graph.add_node("supervisor", supervisor_node)
-    graph.add_node("submission", submission_node)
-    graph.add_node("get_human_representative", get_human_representative)
     graph.add_node("error_handler", error_handling_node)
+    # Tool execution node executes bound tools concurrently and returns ToolMessages
+    graph.add_node("tools", ToolNode([submit_claim_payload, get_human_contact]))
     
     # Add edges from START
     graph.add_edge(START, "voice_input")
@@ -83,24 +83,21 @@ def build_voice_agent_graph(with_memory: bool = True) -> Any:
         "supervisor",
         route_after_supervisor,
         {
-            "submission": "submission",
-            "get_human_representative": "get_human_representative",
+            "tools": "tools",
             "end": END,
             "error_handler": "error_handler"
         }
     )
     
-    # After tool nodes, return to supervisor to render tool outputs
-    graph.add_edge("submission", "supervisor")
-    graph.add_edge("get_human_representative", "supervisor")
+    # After tools execute, return to supervisor to convert tool outputs to user-facing messages
+    graph.add_edge("tools", "supervisor")
     
     graph.add_conditional_edges(
         "error_handler",
         route_after_error,
         {
             "end": END,
-            "supervisor": "supervisor",
-            "get_human_representative": "get_human_representative"
+            "supervisor": "supervisor"
         }
     )
     

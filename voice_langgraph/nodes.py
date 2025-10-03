@@ -4,11 +4,12 @@ Each node represents a specific agent or processing step in the workflow.
 """
 
 import json
+import ast
 import re
 from typing import Dict, Any
 from datetime import datetime
 
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_openai import AzureChatOpenAI
 from trustcall import create_extractor
 
@@ -55,6 +56,38 @@ trustcall_extractor = create_extractor(
     # enable_inserts=True is for managing MULTIPLE instances (e.g., list of Person objects)
     # We're managing a SINGLE PropertyClaim, so we don't need it
 )
+
+# Bind supervisor model with tools for tool-calling agent behavior
+# Tools are executed by the ToolNode; supervisor emits tool_calls when appropriate
+supervisor_llm_with_tools = supervisor_llm.bind_tools([submit_claim_payload, get_human_contact])
+
+
+def _safe_parse_tool_content(content: str) -> Dict[str, Any] | None:
+    """Best-effort parse of ToolMessage.content into a dictionary.
+
+    Tries JSON first, then Python literal eval as a fallback.
+    Returns None if parsing fails or content is empty.
+    """
+    if content is None:
+        return None
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        try:
+            # Some runtimes may pass bytes
+            content = str(content)
+        except Exception:
+            return None
+    text = content.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        try:
+            return ast.literal_eval(text)
+        except Exception:
+            return None
 
 
 async def voice_input_node(state: VoiceAgentState) -> VoiceAgentState:
@@ -137,9 +170,32 @@ Recent conversation:
                 time_info += f" at {relative_time['time']}"
             extraction_context += time_info
         
+        # Add disambiguation rules based on conversation context
+        disambiguation_rules = ""
+        if conversation_history:
+            # Check what the assistant last asked for
+            last_assistant_msg = ""
+            for msg in reversed(conversation_messages):
+                if msg.startswith("Assistant:"):
+                    last_assistant_msg = msg.lower()
+                    break
+            
+            if last_assistant_msg:
+                if any(word in last_assistant_msg for word in ["phone", "number", "reach", "contact"]):
+                    disambiguation_rules += "\nIMPORTANT: The assistant just asked for a PHONE NUMBER. Any 10-digit numeric input should be classified as insured_phone."
+                elif any(word in last_assistant_msg for word in ["policy", "policy number"]):
+                    disambiguation_rules += "\nIMPORTANT: The assistant just asked for a POLICY NUMBER. Alphanumeric inputs should be classified as policy_number."
+                elif any(word in last_assistant_msg for word in ["name", "full name", "your name"]):
+                    disambiguation_rules += "\nIMPORTANT: The assistant just asked for a NAME. Personal names should be classified as insured_name."
+                elif any(word in last_assistant_msg for word in ["date", "when", "time"]):
+                    disambiguation_rules += "\nIMPORTANT: The assistant just asked for DATE/TIME information. Temporal references should be classified as incident_date/incident_time."
+                elif any(word in last_assistant_msg for word in ["address", "location", "where", "street", "zip"]):
+                    disambiguation_rules += "\nIMPORTANT: The assistant just asked for LOCATION information. Address/location data should be classified as incident_street_address or incident_zip_code."
+        
         extraction_prompt = f"""{extraction_context}
+{disambiguation_rules}
 
-Extract claim information into the PropertyClaim schema with careful attention to field classification."""
+Extract claim information into the PropertyClaim schema with careful attention to field classification based on the conversation context."""
         
         # Print trustcall input for debugging
         print("\n" + "="*80)
@@ -199,8 +255,38 @@ async def supervisor_node(state: VoiceAgentState) -> VoiceAgentState:
     CRITICAL: Only adds actual conversation to messages, never JSON dumps.
     """
     try:
-        # First: process outputs from tool nodes (submission/handoff) and generate user-facing messages
-        # This ensures tool outputs are converted to messages centrally in the supervisor
+        # First, ingest recent ToolMessages (from ToolNode) and persist their results into state
+        msgs_for_tools = state.get("messages", [])
+        if msgs_for_tools:
+            # Scan from most recent to oldest to ingest latest tool outputs, even across turns
+            saw_submission = bool(state.get("submission_result") or state.get("claim_data", {}).get("claim_id"))
+            saw_handoff = bool(state.get("handoff_info"))
+            for m in reversed(msgs_for_tools):
+                if isinstance(m, ToolMessage):
+                    if not saw_submission and m.name == submit_claim_payload.name and not state.get("submission_result"):
+                        parsed = _safe_parse_tool_content(m.content)
+                        if isinstance(parsed, dict):
+                            state["submission_result"] = parsed
+                            claim_id = parsed.get("claim_id")
+                            if claim_id:
+                                try:
+                                    state.setdefault("claim_data", {})
+                                    state["claim_data"]["claim_id"] = claim_id
+                                except Exception:
+                                    pass
+                            state["submission_announced"] = False
+                            saw_submission = True
+                    elif not saw_handoff and m.name == get_human_contact.name and not state.get("handoff_info"):
+                        parsed = _safe_parse_tool_content(m.content)
+                        if isinstance(parsed, dict):
+                            state["handoff_info"] = parsed
+                            state["escalation_requested"] = False
+                            saw_handoff = True
+                # Do not break on non-tool messages; continue scanning older items for latest tool outputs
+                if saw_submission and saw_handoff:
+                    break
+
+        # Then: process stored tool outputs into user-facing messages
         if state.get("submission_result") and not state.get("submission_announced"):
             # Prefer the tool-provided summary for determinism; fallback to LLM if missing
             submission_result = state.get("submission_result", {})
@@ -244,6 +330,16 @@ Use the caller's name if available in the claim data.""")
             state["submission_announced"] = True
             return state
 
+        # If already submitted and summary was announced previously, avoid further tool calls/questions
+        claim_data_now = state.get("claim_data", {}) or {}
+        if (state.get("submission_result") or claim_data_now.get("claim_id")) and state.get("submission_announced"):
+            claim_id = claim_data_now.get("claim_id") or state.get("submission_result", {}).get("claim_id")
+            polite_closure = (
+                f"Your claim has already been submitted as {claim_id}. If there's anything else you need, just let me know."
+            )
+            state["messages"] = [AIMessage(content=polite_closure)]
+            return state
+
         if state.get("handoff_info") and not state.get("handoff_acknowledged"):
             # Build a clear, personalized handoff message using stored tool output
             handoff = state.get("handoff_info", {})
@@ -280,12 +376,10 @@ Use the caller's name if available in the claim data.""")
         
         state["is_claim_complete"] = is_complete
         
-        # If claim is complete, routing will handle submission
-        # Just log it here; actual summary message will be generated after submission tool runs
+        # If claim is complete, allow the model to call submit_claim_payload
         if is_complete and not state.get("submission_result"):
-            print(f"[SUPERVISOR] ✅ Claim is complete. Routing will go to submission.")
-            return state
-        
+            print(f"[SUPERVISOR] ✅ Claim is complete. Model may call submit_claim_payload.")
+
         # Get conversation history (actual messages only, last 10)
         msgs = state.get("messages", [])
         conversation_summary = []
@@ -297,12 +391,10 @@ Use the caller's name if available in the claim data.""")
         
         conversation_text = "\n".join(conversation_summary)
         
-        # If escalation was already requested in voice_input, supervisor will still run
-        # but routing will handle sending to get_human_representative node
-        # No need to generate message here - let the handoff node handle it
-        if state.get("escalation_requested"):
-            print(f"[SUPERVISOR] 🔔 Escalation already flagged, will route to handoff")
-            return state
+        # If escalation was already requested, allow the model to call get_human_contact
+        escalation_flag = bool(state.get("escalation_requested"))
+        if escalation_flag:
+            print(f"[SUPERVISOR] 🔔 Escalation flagged; model may call get_human_contact.")
         
         # Get friendly field names for missing fields
         field_descriptions = dict(PropertyClaim.get_field_collection_order())
@@ -324,58 +416,52 @@ INSTRUCTION: Focus your next question on collecting the NEXT FIELD ({next_field_
         else:
             missing_fields_guidance = "All required fields are collected! The claim should be complete."
         
-        # Build supervisor prompt (this is INTERNAL, not added to conversation messages)
-        supervisor_prompt = f"""Recent conversation:
+        # Build tool-aware supervisor prompt (internal, not added to messages)
+        tool_usage_rules = (
+            "Tool usage rules:\n"
+            "- If escalation_requested is true, call get_human_contact immediately (no more questions).\n"
+            "- If the claim is complete and not yet submitted, call submit_claim_payload with the full claim_payload.\n"
+            "- If a claim has already been submitted (submission_result exists or claim_id is set), DO NOT call submit_claim_payload again. Provide a brief closure message instead.\n"
+            "- Otherwise, produce one warm, conversational question to collect ONLY the NEXT missing field.\n"
+            "- Do not mention JSON, fields, or data formats; speak naturally.\n"
+        )
+
+        supervisor_prompt = f"""You are orchestrating an FNOL intake conversation.
+
+Recent conversation (most recent last):
 {conversation_text}
 
-Current claim data summary:
+Current claim data JSON:
 {json.dumps(claim_data, indent=2)}
 
+Missing guidance:
 {missing_fields_guidance}
 
-CRITICAL VALIDATION:
-- Review the conversation history above
-- ONLY acknowledge information that was ACTUALLY mentioned in the conversation
-- If a field has data in JSON but wasn't mentioned in the conversation, the user hasn't provided it yet
-- Example: If JSON shows phone="555-1234" but conversation doesn't mention a phone number, DON'T say "thank you for providing your phone"
-- FOCUS ON COLLECTING THE NEXT MISSING FIELD IF NOT N/A: {next_field_to_collect if next_field_to_collect else 'N/A'}
+Flags:
+- escalation_requested: {escalation_flag}
+- is_claim_complete: {is_complete}
 
-Generate your response as JSON:
-{{
-    "next_message": "Your natural, conversational response that asks for the next missing field",
-    "should_escalate": false,
-    "reasoning": "Why you chose this response and which field you're asking for"
-}}"""
-        
-        # Call LLM with system prompt + analysis prompt (INTERNAL - not added to state messages)
+{tool_usage_rules}
+
+Respond with either:
+1) A normal assistant message asking for the NEXT missing field; OR
+2) A tool call to get_human_contact (for escalation); OR
+3) A tool call to submit_claim_payload with argument {{"claim_payload": <JSON_claim_data>}}.
+"""
+
+        # Call tool-enabled model; it may return an AIMessage with tool_calls
         internal_messages = [
             SystemMessage(content=Prompts.get_supervisor_system_prompt()),
             HumanMessage(content=supervisor_prompt)
         ]
-        
-        response = await supervisor_llm.ainvoke(internal_messages)
-        
-        # Parse response
-        try:
-            decision = json.loads(response.content)
-        except json.JSONDecodeError:
-            print(f"[SUPERVISOR] ⚠️ Failed to parse JSON from LLM response")
-            decision = {
-                "next_message": "I'm here to help with your claim. Could you tell me what happened?",
-                "should_escalate": False,
-                "reasoning": "JSON parse failure - using fallback"
-            }
-        
-        print(f"[SUPERVISOR] Decision - escalate: {decision.get('should_escalate', False)}")
-        print(f"[SUPERVISOR] Reasoning: {decision.get('reasoning', 'No reasoning')[:100]}")
-        
-        # Handle escalation from LLM decision
-        if decision.get("should_escalate", False):
-            state["escalation_requested"] = True
-            print(f"[SUPERVISOR] 🔔 LLM detected escalation request")
-        
-        # Add ONLY the conversation message to state (this goes into the conversation history)
-        state["messages"] = [AIMessage(content=decision["next_message"])]
+
+        response = await supervisor_llm_with_tools.ainvoke(internal_messages)
+
+        if isinstance(response, AIMessage):
+            state["messages"] = [response]
+        else:
+            fallback = getattr(response, "content", None) or "I'm here to help with your claim. Could you tell me what happened?"
+            state["messages"] = [AIMessage(content=fallback)]
             
     except Exception as e:
         # Fallback response on error
@@ -387,36 +473,14 @@ Generate your response as JSON:
 
 
 async def get_human_representative(state: VoiceAgentState) -> VoiceAgentState:
-    """Invoke human contact tool and store handoff info for supervisor to render.
-
-    This node is a pure tool node. The supervisor will generate the user-facing message.
-    """
-    print(f"[ESCALATION] 🔄 Initiating human representative handoff")
-    contact = get_human_contact.invoke({})
-    state["handoff_info"] = contact
-    # Clear escalation flag to avoid loops; supervisor will acknowledge handoff
-    state["escalation_requested"] = False
-    print(f"[ESCALATION] 📞 Contact info retrieved: {contact}")
+    """Deprecated: handled by ToolNode with get_human_contact tool."""
+    print(f"[ESCALATION] ℹ️ get_human_representative node is deprecated; use ToolNode")
     return state
 
 
 async def submission_node(state: VoiceAgentState) -> VoiceAgentState:
-    """Submit the completed claim payload.
-    
-    Pure tool node: call the submission tool, store results, and defer messaging to the supervisor.
-    """
-    try:
-        claim_data = state.get("claim_data", {})
-        print(f"[SUBMISSION] 📝 Submitting completed claim for: {claim_data.get('claimant', {}).get('insured_name', 'Unknown')}")
-        submission_result = submit_claim_payload.invoke({"claim_payload": claim_data})
-        print(f"[SUBMISSION] ✅ Claim submitted successfully. Claim ID: {submission_result.get('claim_id')}")
-        state["claim_data"]["claim_id"] = submission_result.get("claim_id")
-        state["submission_result"] = submission_result
-        state["submission_announced"] = False
-    except Exception as e:
-        print(f"[SUBMISSION] ❌ Error: {e}")
-        state["error"] = f"Failed to submit claim: {str(e)}"
-        state["escalation_requested"] = True
+    """Deprecated: handled by ToolNode with submit_claim_payload tool."""
+    print(f"[SUBMISSION] ℹ️ submission_node is deprecated; use ToolNode")
     return state
 
 

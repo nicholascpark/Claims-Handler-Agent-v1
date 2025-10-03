@@ -5,6 +5,7 @@ Routes based on STATE CONDITIONS, not explicit next_action flags.
 """
 
 from typing import Literal
+from langchain_core.messages import AIMessage
 from .state import VoiceAgentState
 from .schema import PropertyClaim
 
@@ -51,46 +52,58 @@ def route_after_extraction(state: VoiceAgentState) -> Literal["supervisor", "err
     return "supervisor"
 
 
-def route_after_supervisor(state: VoiceAgentState) -> Literal["submission", "get_human_representative", "end", "error_handler"]:
+def route_after_supervisor(state: VoiceAgentState) -> Literal["tools", "end", "error_handler"]:
     """Route after supervisor makes decision.
 
     Routes based on state conditions:
     - error -> error_handler
-    - is_claim_complete=True -> submission
-    - escalation_requested=True -> get_human_representative
+    - supervisor emitted tool_calls -> tools
     - otherwise -> end (wait for next user input)
     """
     if state.get("error"):
         print(f"[ROUTING] Error detected, routing to error_handler")
         return "error_handler"
 
-    # Check if claim is complete and not already submitted this turn
-    # Avoid repeated submissions if submission_result already exists
-    if state.get("is_claim_complete") and not state.get("submission_result"):
-        print(f"[ROUTING] ✅ Claim complete, routing to submission")
-        return "submission"
-    
-    # Check if escalation was requested
-    if state.get("escalation_requested"):
-        print(f"[ROUTING] 🔄 Escalation requested, routing to get_human_representative")
-        return "get_human_representative"
+    # Detect if the last AIMessage includes tool calls
+    messages = state.get("messages", [])
+    claim_data = state.get("claim_data", {}) or {}
+    already_submitted = bool(state.get("submission_result") or claim_data.get("claim_id"))
+
+    for m in reversed(messages):
+        if isinstance(m, AIMessage):
+            tool_calls = getattr(m, "tool_calls", None) or []
+            if tool_calls:
+                # Post-submission safety: ignore submit_claim_payload tool calls
+                allowed_tool_calls = []
+                for tc in tool_calls:
+                    try:
+                        name = (tc.get("name") or tc.get("tool", {}).get("name") or "").strip()
+                    except Exception:
+                        name = ""
+                    if already_submitted and name == "submit_claim_payload":
+                        print("[ROUTING] 🛠️ Ignoring submit_claim_payload after submission; ending turn")
+                        # Do not route to tools for submit after submission
+                        continue
+                    allowed_tool_calls.append(tc)
+
+                if allowed_tool_calls:
+                    print(f"[ROUTING] 🛠️ Tool calls detected from supervisor, routing to tools")
+                    return "tools"
+                # No allowed tool calls remain
+                return "end"
+            break
     
     # Normal flow: supervisor generated response, end this turn
     print(f"[ROUTING] 💬 Normal response, ending turn")
     return "end"
 
 
-def route_after_error(state: VoiceAgentState) -> Literal["end", "supervisor", "get_human_representative"]:
+def route_after_error(state: VoiceAgentState) -> Literal["end", "supervisor"]:
     """Route after error handling.
     
     Routes based on state conditions:
-    - escalation_requested -> get_human_representative
     - otherwise -> end (wait for next user input)
     """
-    if state.get("escalation_requested"):
-        print(f"[ROUTING] Error handler requested escalation")
-        return "get_human_representative"
-    
     # End turn, let user try again
     print(f"[ROUTING] Error handled, ending turn")
     return "end"

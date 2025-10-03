@@ -54,6 +54,20 @@ class VoiceAgentSettings(BaseSettings):
         description="Audio chunk size for processing"
     )
     
+    # Modalities toggles
+    ENABLE_AUDIO_INPUT: bool = Field(
+        default=True,
+        description="Enable microphone audio capture for user input"
+    )
+    ENABLE_TEXT_INPUT: bool = Field(
+        default=True,
+        description="Enable typed text input from console (Enter to submit)"
+    )
+    ENABLE_IMAGE_INPUT: bool = Field(
+        default=True,
+        description="Enable image attachments over Realtime WebSocket"
+    )
+    
     # VAD (Voice Activity Detection) Settings
     VAD_THRESHOLD: float = Field(
         default=0.5,
