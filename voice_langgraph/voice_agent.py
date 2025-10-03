@@ -197,14 +197,20 @@ class VoiceAgent:
             
             # LangGraph orchestrates responses, Realtime speaks them
             if voice_settings.REALTIME_AS_TALKER:
-                # Prefer explicit instructions to make Realtime speak exactly the provided text
-                # Avoid creating an assistant message first to prevent duplicate items
+                # Create an assistant message with the exact text and then trigger playback
                 if not self._response_in_progress:
                     self._response_in_progress = True
                     await self.ws_manager.send({
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": response_message}]
+                        },
+                    })
+                    await self.ws_manager.send({
                         "type": "response.create",
                         "response": {
-                            "instructions": response_message,
                             "tool_choice": "none"
                         }
                     })
@@ -265,16 +271,29 @@ class VoiceAgent:
             # Trigger greeting if not sent
             if not self._greeting_sent:
                 if voice_settings.REALTIME_AS_TALKER:
-                    # Let Realtime produce the greeting immediately for minimal latency
+                    # Speak a fixed English greeting exactly to avoid model improvisation
                     if not self._response_in_progress:
                         self._response_in_progress = True
+                        greeting_text = (
+                            f"Hi there, I'm {voice_settings.AGENT_NAME} with the "
+                            f"{voice_settings.COMPANY_DEPARTMENT} at {voice_settings.COMPANY_NAME}. "
+                            f"I'm here to help with your property insurance claim. "
+                            f"To get started, could you tell me your full name?"
+                        )
+                        await self.ws_manager.send({
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "text", "text": greeting_text}]
+                            },
+                        })
                         await self.ws_manager.send({
                             "type": "response.create",
                             "response": {
-                                "instructions": self.instructions + "\n\nStart with the greeting immediately.",
-                            "tool_choice": "none"
-                        },
-                    })
+                                "tool_choice": "none"
+                            }
+                        })
                 else:
                     # If Realtime is not the talker, do not auto-speak here; the graph will drive speech
                     pass
