@@ -406,53 +406,42 @@ Use the caller's name if available in the claim data.""")
         # Build explicit missing fields guidance
         if missing_friendly:
             missing_fields_guidance = f"""
-MISSING FIELDS TO COLLECT (in priority order):
-1. **NEXT FIELD TO ASK FOR**: {next_field_to_collect}
-2. Then collect: {', '.join(missing_friendly[1:4])}
-{f"   ... and {len(missing_friendly) - 4} more fields" if len(missing_friendly) > 4 else ""}
-
-INSTRUCTION: Focus your next question on collecting the NEXT FIELD ({next_field_to_collect}) in a natural, conversational way.
+Focus your next question on collecting the NEXT FIELD ({next_field_to_collect}) in a warm, caring and conversational way.
 """
         else:
             missing_fields_guidance = "All required fields are collected! The claim should be complete."
-        
-        # Build tool-aware supervisor prompt (internal, not added to messages)
-        tool_usage_rules = (
-            "Tool usage rules:\n"
-            "- If escalation_requested is true, call get_human_contact immediately (no more questions).\n"
-            "- If the claim is complete and not yet submitted, call submit_claim_payload with the full claim_payload.\n"
-            "- If a claim has already been submitted (submission_result exists or claim_id is set), DO NOT call submit_claim_payload again. Provide a brief closure message instead.\n"
-            "- Otherwise, produce one warm, conversational question to collect ONLY the NEXT missing field.\n"
-            "- Do not mention JSON, fields, or data formats; speak naturally.\n"
-        )
 
-        supervisor_prompt = f"""You are orchestrating an FNOL intake conversation.
-
-Recent conversation (most recent last):
-{conversation_text}
+        state_context = f"""
 
 Current claim data JSON:
 {json.dumps(claim_data, indent=2)}
 
-Missing guidance:
+Missing fields guidance:
 {missing_fields_guidance}
 
 Flags:
 - escalation_requested: {escalation_flag}
 - is_claim_complete: {is_complete}
 
-{tool_usage_rules}
+- If escalation_requested is true, call get_human_contact immediately (no more questions).
+- If the claim is complete and not yet submitted, call submit_claim_payload with the full claim_payload with argument {{"claim_payload": <JSON_claim_data>}}.
+- If a claim has already been submitted (submission_result exists or claim_id is set), DO NOT call submit_claim_payload again. Provide a brief closure message instead.
+- Otherwise, produce one warm, conversational question to collect ONLY the NEXT missing field.
+- Do not mention JSON, fields, or data formats; speak naturally.
 
-Respond with either:
-1) A normal assistant message asking for the NEXT missing field; OR
-2) A tool call to get_human_contact (for escalation); OR
-3) A tool call to submit_claim_payload with argument {{"claim_payload": <JSON_claim_data>}}.
 """
+        message_history = msgs[-50:]
 
-        # Call tool-enabled model; it may return an AIMessage with tool_calls
+        # Call tool-enabled model following LangGraph best practices:
+        # 1. SystemMessage with full instructions + state context
+        # 2. Complete conversation history (includes latest human message)
+        system_instructions = f"""{Prompts.get_supervisor_system_prompt()}
+
+{state_context}"""
+
         internal_messages = [
-            SystemMessage(content=Prompts.get_supervisor_system_prompt()),
-            HumanMessage(content=supervisor_prompt)
+            SystemMessage(content=system_instructions),
+            *message_history  # Include full conversation history
         ]
 
         response = await supervisor_llm_with_tools.ainvoke(internal_messages)

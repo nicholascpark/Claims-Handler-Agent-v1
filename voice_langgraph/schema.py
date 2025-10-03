@@ -65,7 +65,12 @@ class PropertyClaim(BaseModel):
     claim_id: Optional[str] = Field(default=None, description="System-generated unique claim identifier")
 
     def is_complete(self) -> bool:
-        """Check if all essential intake fields are populated (claim_id not required for new claims)."""
+        """Check if all essential intake fields are populated (claim_id not required for new claims).
+        
+        BOTH personal_injury and property_damage must be explicitly addressed (not None),
+        but at least one must contain valid data. This ensures the agent asks about both
+        types even if the user reports "no injury" or "no damage" for one type.
+        """
         try:
             # Helper to check if value is valid (not empty and not a placeholder)
             def is_valid_value(value: str) -> bool:
@@ -89,10 +94,16 @@ class PropertyClaim(BaseModel):
                    is_valid_value(self.incident.incident_description)):
                 return False
             
-            # At least one of personal_injury or property_damage must be present and complete
-            has_injury = False
-            has_damage = False
+            # BOTH personal_injury and property_damage must be explicitly addressed (not None)
+            has_addressed_injury = self.personal_injury is not None
+            has_addressed_damage = self.property_damage is not None
             
+            if not (has_addressed_injury and has_addressed_damage):
+                # Agent must ask about both before claim is considered complete
+                return False
+            
+            # Check if personal_injury has valid data (not just placeholder)
+            has_injury = False
             if self.personal_injury:
                 if (self.personal_injury.points_of_impact and 
                     len(self.personal_injury.points_of_impact) > 0 and
@@ -100,6 +111,8 @@ class PropertyClaim(BaseModel):
                     is_valid_value(self.personal_injury.severity)):
                     has_injury = True
             
+            # Check if property_damage has valid data (not just placeholder)
+            has_damage = False
             if self.property_damage:
                 if (is_valid_value(self.property_damage.property_type) and
                     self.property_damage.points_of_impact and 
@@ -108,7 +121,7 @@ class PropertyClaim(BaseModel):
                     is_valid_value(self.property_damage.estimated_damage_severity)):
                     has_damage = True
             
-            # At least one type of damage (injury or property) must be complete
+            # At least one type of damage (injury or property) must have valid data
             return has_injury or has_damage
             
         except Exception:
@@ -151,12 +164,12 @@ class PropertyClaim(BaseModel):
             if not has_content(self.incident.incident_description):
                 missing.append('incident.incident_description')
             
-            # Check if at least one of personal_injury or property_damage is present
-            has_injury_data = self.personal_injury is not None
-            has_damage_data = self.property_damage is not None
-            
-            # Check personal injury fields if present
-            if has_injury_data:
+            # BOTH personal_injury and property_damage must be explicitly addressed
+            # If either is None, it means the agent hasn't asked about it yet
+            if self.personal_injury is None:
+                missing.append('personal_injury_not_addressed')
+            else:
+                # If present, check for missing subfields
                 if not self.personal_injury.points_of_impact or len(self.personal_injury.points_of_impact) == 0:
                     missing.append('personal_injury.points_of_impact')
                 if not has_content(self.personal_injury.injury_description):
@@ -164,8 +177,10 @@ class PropertyClaim(BaseModel):
                 if not has_content(self.personal_injury.severity):
                     missing.append('personal_injury.severity')
             
-            # Check property damage fields if present
-            if has_damage_data:
+            if self.property_damage is None:
+                missing.append('property_damage_not_addressed')
+            else:
+                # If present, check for missing subfields
                 if not has_content(self.property_damage.property_type):
                     missing.append('property_damage.property_type')
                 if not self.property_damage.points_of_impact or len(self.property_damage.points_of_impact) == 0:
@@ -174,10 +189,6 @@ class PropertyClaim(BaseModel):
                     missing.append('property_damage.damage_description')
                 if not has_content(self.property_damage.estimated_damage_severity):
                     missing.append('property_damage.estimated_damage_severity')
-            
-            # If neither injury nor damage is specified, we need to know which one applies
-            if not has_injury_data and not has_damage_data:
-                missing.append('damage_type_unknown')
             
         except Exception:
             missing.append('schema_validation_error')
@@ -201,10 +212,12 @@ class PropertyClaim(BaseModel):
             ("incident.incident_location.incident_street_address", "incident address"),
             ("incident.incident_location.incident_zip_code", "incident zip/postal code"),
             ("incident.incident_description", "what happened"),
-            # Damage details (either personal injury or property damage)
+            # Damage details - BOTH types must be addressed
+            ("personal_injury_not_addressed", "personal injury information"),
             ("personal_injury.points_of_impact", "injury points of impact"),
             ("personal_injury.injury_description", "injury description"),
             ("personal_injury.severity", "injury severity"),
+            ("property_damage_not_addressed", "property damage information"),
             ("property_damage.property_type", "property type"),
             ("property_damage.points_of_impact", "damaged areas"),
             ("property_damage.damage_description", "damage description"),
