@@ -59,11 +59,38 @@ function ChatHistory({ messages }) {
                       )}
                     </div>
                     <div className="flex-1">
-                      <p className="text-sm">{msg.content}</p>
+                      {/* Text Content */}
+                      {msg.content && <p className="text-sm whitespace-pre-wrap">{msg.content}</p>}
+                      
+                      {/* Image Content */}
+                      {msg.image && (
+                        <div className="mt-2">
+                          <img 
+                            src={msg.image} 
+                            alt="Uploaded" 
+                            className="max-w-full h-auto rounded-lg border border-gray-200 max-h-64 object-contain"
+                            loading="lazy"
+                          />
+                          {msg.imageName && (
+                            <p className="text-xs mt-1 text-gray-500">{msg.imageName}</p>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Timestamp */}
                       {msg.timestamp && (
                         <p className={`text-xs mt-1 ${msg.role === 'user' ? 'text-gray-600' : 'text-gray-400'}`}>
                           {msg.timestamp}
                         </p>
+                      )}
+                      
+                      {/* Message Type Indicator */}
+                      {msg.type && (
+                        <span className={`text-xs ${msg.role === 'user' ? 'text-gray-500' : 'text-gray-400'}`}>
+                          {msg.type === 'text' && '💬'}
+                          {msg.type === 'voice' && '🎤'}
+                          {msg.type === 'image' && '🖼️'}
+                        </span>
                       )}
                     </div>
                   </div>

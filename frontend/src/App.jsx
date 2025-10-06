@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Header from './components/Header'
 import CallAgentButton from './components/CallAgentButton'
 import ChatHistory from './components/ChatHistory'
+import ChatInput from './components/ChatInput'
 import JsonPayloadDisplay from './components/JsonPayloadDisplay'
 import StatusIndicator from './components/StatusIndicator'
 import MicrophoneSelector from './components/MicrophoneSelector'
@@ -20,6 +21,8 @@ function App() {
     error,
     startSession,
     stopSession,
+    sendTextMessage,
+    sendImage,
     microphones,
     selectedDeviceId,
     setSelectedDeviceId,
@@ -91,10 +94,16 @@ function App() {
 
         {/* Main Layout: Chat History and JSON Payload */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Panel: Chat History */}
+          {/* Left Panel: Chat History with Input */}
           {chatVisible && (
-            <div className="flex flex-col">
+            <div className="flex flex-col space-y-4">
               <ChatHistory messages={messages} />
+              <ChatInput 
+                onSendText={sendTextMessage}
+                onSendImage={sendImage}
+                isDisabled={!isConnected}
+                isSessionActive={isSessionActive}
+              />
             </div>
           )}
 

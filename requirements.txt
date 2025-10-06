@@ -1,51 +1,54 @@
-# Core Dependencies for Claims Handler Agent v1 - Trustcall-Only Backend
-# Based on OpenAI Chat Supervisor pattern with exclusive trustcall JSON extraction
+# Claims Handler Agent v1 - Unified Requirements
+# All dependencies for voice agent with Realtime API and LangGraph
 
-# Essential AI and API dependencies
-openai>=1.0.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-python-dotenv>=1.0.0
+# FastAPI and ASGI server
+fastapi
+uvicorn[standard]
+python-multipart
+gunicorn
 
-# REQUIRED: Trustcall and LangChain for JSON extraction (NO FALLBACKS)
-trustcall>=0.0.39
-langchain-openai>=0.1.0
-langchain-core>=0.2.0
-langgraph>=0.1.0
+# LangChain and LangGraph
+langchain
+langchain-core
+langchain-openai
+langgraph
+langchain-community
 
-# Location services (preserved from original)
+# Trustcall for extraction
+trustcall
+
+# Azure OpenAI
+openai
+azure-identity
+
+# Audio processing
+sounddevice
+numpy
+pyaudio
+
+# WebSocket client for Realtime API
+websockets
+aiohttp
+websocket-client
+
+# Configuration and utilities
+python-dotenv
+pydantic
+pydantic-settings
+pytz
+
+# Location services
 pgeocode
 pandas
 
-# Async support for API integration
-aiohttp
+# Graph visualization
+Pillow
+pyppeteer
 
-# Voice Processing Dependencies for Enhanced Test Script
-websockets>=12.0
-pyaudio>=0.2.11
-numpy>=2.0.0
-sounddevice>=0.4.6
-
-# Graph Visualization
-Pillow>=10.0.0
-pyppeteer>=1.0.0
+# Logging and monitoring
+python-json-logger
 
 # Development and testing
 pytest
 pytest-asyncio
 black
-
-# Optional: FastAPI for potential web interface
-fastapi
-uvicorn[standard]
-
-# Optional: Enhanced features
-pytz
-gunicorn
-
-# Notes:
-# - trustcall is now REQUIRED (no fallback methods available)
-# - langchain-openai REQUIRED for AzureChatOpenAI integration
-# - All JSON extraction uses trustcall exclusively
-# - SQLAlchemy omitted (no DB state in this project)
-# - asyncio is built-in to Python 3.7+, removed from requirements

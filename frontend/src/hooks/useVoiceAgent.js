@@ -71,6 +71,114 @@ export function useVoiceAgent() {
     }
   }, [refreshAudioDevices])
 
+  // Handle messages from server (defined before connectWebSocket to avoid circular dependency)
+  const handleServerMessage = useCallback((message) => {
+    const { type, data } = message
+
+    switch (type) {
+      case 'connected':
+        setAgentStatus('Ready')
+        console.log('Session connected:', data.session_id)
+        break
+
+      case 'chat_message':
+        // Check if message already exists (avoid duplicates from optimistic updates)
+        setMessages(prev => {
+          const isDuplicate = prev.some(msg => 
+            msg.role === data.role && 
+            msg.content === data.content &&
+            Math.abs(new Date(msg.timestamp).getTime() - new Date(data.timestamp).getTime()) < 2000
+          )
+          
+          if (isDuplicate) {
+            return prev
+          }
+          
+          return [...prev, {
+            role: data.role,
+            content: data.content,
+            type: data.type || 'voice',
+            image: data.image,
+            imageName: data.imageName,
+            timestamp: data.timestamp
+          }]
+        })
+        
+        // Update status based on message role
+        if (data.role === 'assistant') {
+          setAgentStatus('Agent speaking...')
+          setIsSpeaking(false) // Audio is done when transcript arrives
+        }
+        break
+
+      case 'claim_data_update':
+        setClaimData(data.claim_data)
+        setIsClaimComplete(data.is_complete)
+        console.log('Claim data updated:', data.is_complete ? 'Complete' : 'In progress')
+        break
+
+      case 'audio_delta':
+        // Play audio through worklet
+        if (playbackWorkletRef.current && data.audio) {
+          try {
+            // Ensure audio context is running before playing
+            if (audioContextRef.current?.state === 'suspended') {
+              audioContextRef.current.resume()
+            }
+            
+            const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))
+            const audioData = new Int16Array(audioBytes.buffer)
+            playbackWorkletRef.current.port.postMessage({ audio: audioData })
+            setIsSpeaking(true)
+          } catch (err) {
+            console.error('Failed to decode audio:', err)
+          }
+        }
+        break
+
+      case 'user_speech_started':
+        setAgentStatus('Listening...')
+        setIsSpeaking(false)
+        break
+
+      case 'user_speech_stopped':
+        setAgentStatus('Processing...')
+        break
+
+      case 'agent_ready':
+        setAgentStatus('Ready')
+        setIsSpeaking(false)
+        // Ensure audio context is ready for next playback
+        if (audioContextRef.current?.state === 'suspended') {
+          audioContextRef.current.resume().then(() => {
+            console.log('Audio context resumed for agent speech')
+          })
+        }
+        break
+
+      case 'claim_complete':
+        setClaimData(data.claim_data)
+        setIsClaimComplete(true)
+        setAgentStatus('Claim Submitted ✅')
+        console.log('Claim submitted successfully:', data.submission_result)
+        
+        // Show success message
+        if (data.submission_result?.claim_id) {
+          console.log('Claim ID:', data.submission_result.claim_id)
+        }
+        break
+
+      case 'error':
+        setError(data.message)
+        setAgentStatus('Error')
+        console.error('Server error:', data.message)
+        break
+
+      default:
+        console.log('Unknown message type:', type, data)
+    }
+  }, [])
+
   // Initialize audio context and worklets
   const initializeAudio = useCallback(async () => {
     try {
@@ -192,84 +300,7 @@ export function useVoiceAgent() {
         }, RECONNECT_DELAY)
       }
     }
-  }, [connectWebSocket])  // Add dependency
-
-  // Handle messages from server
-  const handleServerMessage = (message) => {
-    const { type, data } = message
-
-    switch (type) {
-      case 'connected':
-        setAgentStatus('Ready')
-        console.log('Session connected:', data.session_id)
-        break
-
-      case 'chat_message':
-        setMessages(prev => [...prev, {
-          role: data.role,
-          content: data.content,
-          timestamp: data.timestamp
-        }])
-        break
-
-      case 'claim_data_update':
-        setClaimData(data.claim_data)
-        setIsClaimComplete(data.is_complete)
-        break
-
-      case 'audio_delta':
-        // Play audio through worklet
-        if (playbackWorkletRef.current && data.audio) {
-          try {
-            // Ensure audio context is running before playing
-            if (audioContextRef.current?.state === 'suspended') {
-              audioContextRef.current.resume()
-            }
-            
-            const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))
-            const audioData = new Int16Array(audioBytes.buffer)
-            playbackWorkletRef.current.port.postMessage({ audio: audioData })
-            setIsSpeaking(true)
-          } catch (err) {
-            console.error('Failed to decode audio:', err)
-          }
-        }
-        break
-
-      case 'user_speech_started':
-        setAgentStatus('Listening to you...')
-        break
-
-      case 'user_speech_stopped':
-        setAgentStatus('Processing...')
-        break
-
-      case 'agent_ready':
-        setAgentStatus('Ready - Agent speaking...')
-        // Ensure audio context is ready for playback
-        if (audioContextRef.current?.state === 'suspended') {
-          audioContextRef.current.resume().then(() => {
-            console.log('Audio context resumed for agent speech')
-          })
-        }
-        break
-
-      case 'claim_complete':
-        setClaimData(data.claim_data)
-        setIsClaimComplete(true)
-        setAgentStatus('Claim Submitted')
-        console.log('Claim submitted:', data.submission_result)
-        break
-
-      case 'error':
-        setError(data.message)
-        setAgentStatus('Error')
-        break
-
-      default:
-        console.log('Unknown message type:', type)
-    }
-  }
+  }, [handleServerMessage])  // Add dependency
 
   // Start voice session
   const startSession = useCallback(async () => {
@@ -397,6 +428,54 @@ export function useVoiceAgent() {
     }
   }, [])
 
+  // Send text message
+  const sendTextMessage = useCallback((text) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && isSessionActive) {
+      wsRef.current.send(JSON.stringify({
+        type: 'text_input',
+        text: text
+      }))
+      
+      // Optimistically add to UI
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: text,
+        type: 'text',
+        timestamp: new Date().toLocaleTimeString()
+      }])
+      
+      console.log('Sent text message:', text)
+    } else {
+      console.warn('Cannot send text: WebSocket not connected or session inactive')
+    }
+  }, [isSessionActive])
+
+  // Send image
+  const sendImage = useCallback((imageData) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && isSessionActive) {
+      wsRef.current.send(JSON.stringify({
+        type: 'image_input',
+        image: imageData.data,
+        mimeType: imageData.mimeType,
+        name: imageData.name
+      }))
+      
+      // Optimistically add to UI with preview
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: `Sent image: ${imageData.name}`,
+        image: `data:${imageData.mimeType};base64,${imageData.data}`,
+        imageName: imageData.name,
+        type: 'image',
+        timestamp: new Date().toLocaleTimeString()
+      }])
+      
+      console.log('Sent image:', imageData.name, imageData.mimeType)
+    } else {
+      console.warn('Cannot send image: WebSocket not connected or session inactive')
+    }
+  }, [isSessionActive])
+
   return {
     isConnected,
     isSessionActive,
@@ -408,6 +487,8 @@ export function useVoiceAgent() {
     isSpeaking,
     startSession,
     stopSession,
+    sendTextMessage,
+    sendImage,
     // microphone selection API
     microphones,
     selectedDeviceId,
