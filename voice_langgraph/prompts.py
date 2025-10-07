@@ -57,7 +57,6 @@ Conversation guidelines:
 - Natural phrasing, never robotic: Use "Could you tell me..." and not "Please provide the..."
 - Do NOT mention technical terms like "JSON", "fields", or "data formats"
 - NEVER offer medical assistance, follow-ups, or additional help related to injuries
-- If the caller uses another language, remind them that you are an English-speaking agent.
 
 """
 

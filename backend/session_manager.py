@@ -120,12 +120,8 @@ class VoiceSession:
                 "language": voice_settings.TRANSCRIPTION_LANGUAGE,
                 "model": voice_settings.TRANSCRIPTION_MODEL,
             },
-            "turn_detection": {
-                "type": "server_vad",
-                "threshold": voice_settings.VAD_THRESHOLD,
-                "prefix_padding_ms": voice_settings.VAD_PREFIX_PADDING_MS,
-                "silence_duration_ms": voice_settings.VAD_SILENCE_DURATION_MS,
-            },
+            # Disable server VAD to avoid unintended model-initiated responses
+            # We orchestrate turns via LangGraph and explicit events
         }
     
     async def handle_audio_data(self, audio_base64: str):
@@ -237,9 +233,8 @@ class VoiceSession:
                 })
             
             elif event_type == "session.updated":
-                # Send greeting
+                # Do not auto-greet via Realtime; LangGraph will drive assistant speech
                 if not self._greeting_sent:
-                    await self._send_greeting()
                     self._greeting_sent = True
             
             elif event_type == "response.audio.delta":
@@ -253,7 +248,6 @@ class VoiceSession:
             
             elif event_type == "response.audio_transcript.done":
                 # Capture assistant transcript
-                self._response_in_progress = False
                 transcript = event.get("transcript", "")
                 if transcript and isinstance(transcript, str):
                     transcript = transcript.strip()
@@ -314,9 +308,10 @@ class VoiceSession:
                     "data": {}
                 })
                 
-                # Cancel any ongoing response
+                # Cancel any ongoing response only if one is active
                 self._accept_audio_streaming = True
-                await self.realtime_ws.send({"type": "response.cancel"})
+                if self._response_in_progress:
+                    await self.realtime_ws.send({"type": "response.cancel"})
             
             elif event_type == "input_audio_buffer.speech_stopped":
                 # User stopped speaking
@@ -325,6 +320,16 @@ class VoiceSession:
                     "data": {}
                 })
                 self._accept_audio_streaming = False
+                # Cancel any model-initiated response (autopilot) to ensure only LangGraph responses are spoken
+                try:
+                    await self.realtime_ws.send({"type": "response.cancel"})
+                except Exception:
+                    pass
+                # Prevent Realtime from auto-generating a response; LangGraph will drive the reply
+                try:
+                    await self.realtime_ws.send({"type": "response.cancel"})
+                except Exception:
+                    pass
             
             elif event_type == "conversation.item.created":
                 # Handle user message
@@ -361,6 +366,7 @@ class VoiceSession:
                             await self._process_user_message(transcript)
             
             elif event_type == "response.done":
+                # Only mark the response as finished here to avoid early overlaps
                 self._response_in_progress = False
                 self._accept_audio_streaming = True
                 

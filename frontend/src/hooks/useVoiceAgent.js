@@ -130,6 +130,8 @@ export function useVoiceAgent() {
             const audioData = new Int16Array(audioBytes.buffer)
             playbackWorkletRef.current.port.postMessage({ audio: audioData })
             setIsSpeaking(true)
+            // While agent is speaking, we should avoid sending mic chunks
+            // Microphone capture gate is enforced by the backend; we also prevent UI from flooding
           } catch (err) {
             console.error('Failed to decode audio:', err)
           }

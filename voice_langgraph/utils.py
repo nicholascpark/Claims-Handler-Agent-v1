@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, AsyncGenerator
 from datetime import datetime, timedelta
 
 import numpy as np
+from time import monotonic
 import sounddevice as sd
 import pytz
 import aiohttp
@@ -25,7 +26,7 @@ class AudioProcessor:
         self,
         sample_rate: int = 24000,
         channels: int = 1,
-        chunk_size: int = 1024,
+        chunk_size: int = 2048,
         dtype: str = "int16"
     ):
         self.sample_rate = sample_rate
@@ -149,6 +150,16 @@ class AudioPlayback:
         self.buffer = bytearray()
         self.stream: Optional[sd.OutputStream] = None
         self._lock = asyncio.Lock()
+        # Prebuffer to reduce underruns on network jitter (increase to ~600ms)
+        bytes_per_second = self.sample_rate * self.channels * 2  # int16 = 2 bytes
+        self._min_prebuffer_bytes = int(bytes_per_second * 0.60)
+        # Cap jitter buffer to ~2.0s to avoid aggressive trimming that can slur speech
+        self._max_buffer_bytes = int(bytes_per_second * 2.0)
+        # Playback state: wait until prebuffer threshold is met
+        self._started = False
+        self._underrun_count = 0
+        self._last_state_log_ts = 0.0
+        self._chunks_size_logged = 0
         
     def _output_callback(self, outdata, frames, time_info, status):
         """Callback for audio output stream."""
@@ -156,19 +167,40 @@ class AudioPlayback:
             print(f"Audio output error: {status}")
             
         bytes_needed = frames * self.channels * 2  # 2 bytes per sample for int16
-        
-        if len(self.buffer) >= bytes_needed:
+        current_len = len(self.buffer)
+
+        # If playback hasn't started, wait for prebuffer to fill to avoid stutter
+        if not self._started:
+            if current_len < self._min_prebuffer_bytes:
+                outdata[:] = 0
+                return
+            # Prebuffer satisfied; start playback
+            self._started = True
+            try:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔊 Playback start (prebuffer={current_len} bytes)")
+            except Exception:
+                pass
+
+        # Normal playback path
+        if current_len >= bytes_needed:
             # Get data from buffer
             chunk = bytes(self.buffer[:bytes_needed])
             del self.buffer[:bytes_needed]
-            
+
             # Convert to numpy array
             audio_data = np.frombuffer(chunk, dtype=np.int16)
             audio_data = audio_data.reshape(frames, self.channels)
             outdata[:] = audio_data
         else:
-            # Not enough data, output silence
+            # Underrun: output silence and re-enter prebuffering mode
             outdata[:] = 0
+            self._started = False
+            self._underrun_count += 1
+            if self._underrun_count <= 3 or (self._underrun_count % 50 == 0):
+                try:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Audio underrun (count={self._underrun_count}, buffer={current_len} bytes)")
+                except Exception:
+                    pass
             
     def start(self):
         """Start audio playback stream."""
@@ -178,6 +210,7 @@ class AudioPlayback:
                 channels=self.channels,
                 dtype=self.dtype,
                 blocksize=self.chunk_size,
+                latency='high',
                 callback=self._output_callback
             )
             self.stream.start()
@@ -193,10 +226,31 @@ class AudioPlayback:
         """Add audio data to playback buffer."""
         async with self._lock:
             self.buffer.extend(audio_data)
+            # Bound jitter buffer: avoid trimming audio; log if exceeding cap
+            if len(self.buffer) > self._max_buffer_bytes:
+                try:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Playback buffer exceeded cap ({len(self.buffer)}>{self._max_buffer_bytes} bytes); allowing growth to prevent slurring")
+                except Exception:
+                    pass
+            # Log size of first few chunks for debugging
+            if self._chunks_size_logged < 3:
+                try:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🐛 DEBUG: Added audio chunk {len(audio_data)} bytes (buffer={len(self.buffer)} bytes)")
+                except Exception:
+                    pass
+                self._chunks_size_logged += 1
             
     def clear_buffer(self):
         """Clear the playback buffer."""
         self.buffer.clear()
+        # Reset startup state so next response prebuffers properly
+        self._started = False
+        self._underrun_count = 0
+        self._chunks_size_logged = 0
+
+    def get_buffer_size_bytes(self) -> int:
+        """Return current playback buffer size in bytes."""
+        return len(self.buffer)
 
 
 class WebSocketManager:
