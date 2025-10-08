@@ -242,24 +242,18 @@ class VoiceAgent:
             except Exception:
                 pass
             
-            # LangGraph orchestrates responses, Realtime speaks them
+            # LangGraph orchestrates responses; Realtime performs TTS of EXACT text
             if voice_settings.REALTIME_AS_TALKER:
-                # Create an assistant message with the exact text and then trigger playback
                 if not self._response_in_progress:
-                    print(f"[{get_timestamp()}] 📨 OUTBOUND conversation.item.create (assistant), chars={len(response_message or '')}")
                     self._response_in_progress = True
-                    await self.ws_manager.send({
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": response_message}]
-                        },
-                    })
-                    print(f"[{get_timestamp()}] ▶️ OUTBOUND response.create (tool_choice=none)")
+                    print(f"[{get_timestamp()}] ▶️ OUTBOUND response.create (instructions, conversation=none)")
                     await self.ws_manager.send({
                         "type": "response.create",
                         "response": {
+                            # Speak the exact LangGraph message; do not consult conversation state. Speak verbatim.
+                            "instructions": f"Speak verbatim: {response_message}",
+                            "conversation": "none",
+                            "modalities": ["audio", "text"],
                             "tool_choice": "none"
                         }
                     })
@@ -284,18 +278,19 @@ class VoiceAgent:
                 
         except Exception as e:
             print(f"⚠️ Workflow error: {e}")
-            # Send fallback response
-            await self.ws_manager.send({
-                "type": "conversation.item.create", 
-                "item": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "I'm here to help with your claim. Could you please tell me what happened?"}]
-                },
-            })
+            # Send fallback TTS directly via response.create with instructions
             if not self._response_in_progress:
                 self._response_in_progress = True
-                await self.ws_manager.send({"type": "response.create"})
+                print(f"[{get_timestamp()}] ▶️ OUTBOUND response.create (fallback, conversation=none)")
+                await self.ws_manager.send({
+                    "type": "response.create",
+                    "response": {
+                        "instructions": "I'm here to help with your claim. Could you please tell me what happened?",
+                        "conversation": "none",
+                        "modalities": ["audio"],
+                        "tool_choice": "none"
+                    }
+                })
             else:
                 print(f"[{get_timestamp()}] ⚠️ Skipping response.create - already in progress")
             

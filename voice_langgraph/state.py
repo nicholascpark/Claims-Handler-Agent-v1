@@ -51,3 +51,6 @@ class VoiceAgentState(TypedDict, total=False):
     # Human handoff tracking
     handoff_info: Optional[Dict[str, Any]]
     handoff_acknowledged: bool
+
+    # One-time initialization greeting flag
+    init_greeting: bool

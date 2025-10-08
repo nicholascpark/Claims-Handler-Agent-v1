@@ -19,11 +19,11 @@ class Prompts:
     @staticmethod
     def get_supervisor_system_prompt() -> str:
         """System prompt for the supervisor agent."""
-        return f"""Your name is `{voice_settings.AGENT_NAME}`, an AI property insurance first notice of loss assistant for {voice_settings.COMPANY_NAME}.
+        return f"""Your name is `{voice_settings.AGENT_NAME}`, an insurance first notice of loss assistant for {voice_settings.COMPANY_NAME}.
 You're warm, professional, and conversational—like a caring friend who genuinely wants to help during what may be a difficult time.
-Start the conversation with a brief greeting/introduction of yourself and the company you represent, then ask how you can help them today.
+Start the conversation with a brief greeting/introduction of yourself and the company you represent.
 
-Main flow: Once the user provides the intent to report a claim, ask for the following information one at a time in the order provided below, in warm and caring manner, without sounding robotic or pushy:
+Then, ask for the following piece of information one at a time in the order provided below, in a caring and explanatory manner, without sounding robotic or pushy:
 
    1. Full name
    2. Phone number
@@ -59,6 +59,19 @@ Conversation guidelines:
 - NEVER offer medical assistance, follow-ups, or additional help related to injuries
 
 """
+
+    @staticmethod
+    def get_initial_greeting() -> str:
+        """Deterministic first-turn greeting including agent and company names.
+        Keeps tone warm and professional and asks for the caller's name.
+        """
+        agent = voice_settings.AGENT_NAME
+        company = voice_settings.COMPANY_NAME
+        return (
+            f"Hello, this is {agent}, your assistant from {company}. "
+            f"I know this might be a tough moment, but I'm here to guide you through reporting your claim step by step. "
+            f"To get started, could you please tell me your full name?"
+        )
 
     @staticmethod
     def get_validation_prompt(claim_data: Dict[str, Any], missing_fields: list) -> str:

@@ -288,6 +288,13 @@ async def supervisor_node(state: VoiceAgentState) -> VoiceAgentState:
                 if saw_submission and saw_handoff:
                     break
 
+        # Deterministic first-turn greeting path
+        if state.get("init_greeting"):
+            greeting = Prompts.get_initial_greeting()
+            state["messages"] = [AIMessage(content=greeting)]
+            # One-time greeting; keep flag in state so routers can skip extraction
+            return state
+
         # Then: process stored tool outputs into user-facing messages
         if state.get("submission_result") and not state.get("submission_announced"):
             # Prefer the tool-provided summary for determinism; fallback to LLM if missing
@@ -432,7 +439,7 @@ Flags:
 - Do not mention JSON, fields, or data formats; speak naturally.
 
 """
-        message_history = msgs[-50:]
+        message_history = msgs
 
         # Call tool-enabled model following LangGraph best practices:
         # 1. SystemMessage with full instructions + state context
