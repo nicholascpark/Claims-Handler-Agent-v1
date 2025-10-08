@@ -364,6 +364,17 @@ class VoiceSession:
                                self.conversation_history[-1].get("role") == "user" and
                                self.conversation_history[-1].get("content") == transcript):
                             await self._process_user_message(transcript)
+
+            elif event_type == "input_audio_transcription.completed":
+                # Accept top-level transcription completion events as well
+                transcript = event.get("transcript")
+                if transcript and isinstance(transcript, str):
+                    transcript = transcript.strip()
+                    if transcript:
+                        if not (self.conversation_history and 
+                               self.conversation_history[-1].get("role") == "user" and
+                               self.conversation_history[-1].get("content") == transcript):
+                            await self._process_user_message(transcript)
             
             elif event_type == "response.done":
                 # Only mark the response as finished here to avoid early overlaps

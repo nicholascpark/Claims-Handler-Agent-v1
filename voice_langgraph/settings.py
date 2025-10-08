@@ -19,7 +19,7 @@ class VoiceAgentSettings(BaseSettings):
     
     # Company Information
     COMPANY_NAME: str = Field(
-        default="Intact Specialty Insurance",
+        default="Intact Insurance Specialty Solutions",
         description="Name of the insurance company"
     )
     

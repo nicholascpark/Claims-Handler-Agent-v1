@@ -43,7 +43,7 @@ supervisor_llm = AzureChatOpenAI(
     azure_endpoint=voice_settings.AZURE_OPENAI_ENDPOINT,
     api_key=voice_settings.AZURE_OPENAI_API_KEY,
     api_version=voice_settings.AZURE_OPENAI_CHAT_API_VERSION,
-    temperature=0.7
+    temperature=0.3
 )
 
 # Initialize trustcall extractor with PropertyClaim schema
@@ -103,9 +103,11 @@ async def voice_input_node(state: VoiceAgentState) -> VoiceAgentState:
             user_input = m.content or ""
             break
 
+    # Allow an initialization greeting turn without a user message
     if not user_input.strip():
-        state["error"] = "No user message to process"
-        return state
+        if not state.get("init_greeting"):
+            state["error"] = "No user message to process"
+            return state
 
     # Reset error and set timestamp
     state["error"] = None

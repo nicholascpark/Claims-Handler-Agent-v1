@@ -81,6 +81,26 @@ class VoiceAgent:
         self._current_response_id = None
         self._unexpected_response_ids = set()
         self._resp_delta_counter = 0
+        # Track whether we are awaiting a user transcript after commit
+        self._awaiting_transcript: bool = False
+
+    async def _transcript_timeout_guard(self, timeout_seconds: float = 6.0):
+        """If no transcript arrives within timeout, unlock and resume mic.
+        This prevents deadlocks when providers omit expected events.
+        """
+        try:
+            start = monotonic()
+            while self._awaiting_transcript and self._is_running:
+                if monotonic() - start >= timeout_seconds:
+                    # Timeout reached without transcript; recover gracefully
+                    print(f"[{get_timestamp()}] ⏳ Transcript timeout; unlocking turn and resuming mic")
+                    self._awaiting_transcript = False
+                    self._unlock_turn()
+                    return
+                await asyncio.sleep(0.1)
+        except Exception:
+            # Best-effort safety; do not crash on guard
+            self._awaiting_transcript = False
         
     def _build_ws_url(self) -> str:
         """Build WebSocket URL for Azure OpenAI Realtime API."""
@@ -177,7 +197,7 @@ class VoiceAgent:
         except Exception as e:
             return False, f"Failed to attach image: {e}"
         
-    async def _run_langgraph_workflow(self, user_message: str):
+    async def _run_langgraph_workflow(self, user_message: str, init_greeting: bool = False):
         """Run the LangGraph workflow with the user's message.
         
         Triggered by transcription completion events from Realtime API.
@@ -185,13 +205,14 @@ class VoiceAgent:
         # Create state for LangGraph workflow
         # Note: Only pass NEW messages - LangGraph's checkpointer handles history
         state: VoiceAgentState = {
-            "messages": [HumanMessage(content=user_message)],
+            "messages": ([] if init_greeting else [HumanMessage(content=user_message)]),
             "claim_data": self.current_claim_data,
             "timestamp": datetime.now().isoformat(),
             "current_timezone": self.current_timezone,
             "is_claim_complete": False,
             "escalation_requested": False,
             "retry_count": 0,
+            "init_greeting": init_greeting,
         }
         
         # Config with thread_id required for checkpointer
@@ -307,17 +328,10 @@ class VoiceAgent:
                     print(f"[{get_timestamp()}] 🎙️ AI listening... (output_format={out_fmt}, input_format={in_fmt}, voice={voice_name})")
                 except Exception:
                     print(f"[{get_timestamp()}] 🎙️ AI listening...")
-                # Elegantly kick off the conversation via LangGraph by injecting a typed user message
-                # Lock the turn as text and pause mic streaming during assistant reply
+                # Trigger an initial greeting via LangGraph (no fake user message)
+                # Lock the turn and pause mic during assistant greeting
                 self._lock_turn("text")
-                await self.ws_manager.send({
-                    "type": "conversation.item.create",
-                    "item": {
-                        "type": "message",
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": "Hello"}]
-                    },
-                })
+                await self._run_langgraph_workflow("", init_greeting=True)
                 
         elif event_type == "input_audio_buffer.speech_started":
             # User started speaking (for observability only)
@@ -445,6 +459,8 @@ class VoiceAgent:
                         if transcript and isinstance(transcript, str):
                             transcript = transcript.strip()
                             if transcript:
+                                # Transcript received; clear awaiting flag
+                                self._awaiting_transcript = False
                                 print(f"[{get_timestamp()}] 👤 User: {transcript}")
                                 self.conversation_history.append({
                                     "role": "user", 
@@ -488,6 +504,8 @@ class VoiceAgent:
             if transcript and isinstance(transcript, str):
                 transcript = transcript.strip()
                 if transcript:
+                    # Transcript received; clear awaiting flag
+                    self._awaiting_transcript = False
                     # Check if we already processed this transcript
                     if not (self.conversation_history and 
                            self.conversation_history[-1].get("role") == "user" and
@@ -500,6 +518,25 @@ class VoiceAgent:
                         })
                         
                         # Trigger LangGraph workflow
+                        await self._run_langgraph_workflow(transcript)
+
+        elif event_type == "input_audio_transcription.completed":
+            # Accept top-level transcription completion events as well
+            transcript = event.get("transcript")
+            if transcript and isinstance(transcript, str):
+                transcript = transcript.strip()
+                if transcript:
+                    # Transcript received; clear awaiting flag
+                    self._awaiting_transcript = False
+                    if not (self.conversation_history and 
+                           self.conversation_history[-1].get("role") == "user" and
+                           self.conversation_history[-1].get("content") == transcript):
+                        print(f"[{get_timestamp()}] 👤 User: {transcript}")
+                        self.conversation_history.append({
+                            "role": "user", 
+                            "content": transcript,
+                            "timestamp": get_timestamp()
+                        })
                         await self._run_langgraph_workflow(transcript)
             
         elif event_type == "response.content_part.done":
@@ -587,6 +624,9 @@ class VoiceAgent:
                                 # Pause mic streaming after commit to avoid sending extra audio
                                 self._accept_audio_streaming = False
                                 print(f"[{get_timestamp()}] 📝 Audio committed, awaiting transcript...")
+                                # Start transcript timeout guard
+                                self._awaiting_transcript = True
+                                asyncio.create_task(self._transcript_timeout_guard(6.0))
                             except Exception as _:
                                 # On commit error, unlock so user can retry
                                 self._unlock_turn()

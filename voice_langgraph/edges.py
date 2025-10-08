@@ -19,6 +19,11 @@ def route_after_input(state: VoiceAgentState) -> Literal["extraction_worker", "s
     - claim already submitted -> supervisor (skip extraction)
     - otherwise -> extraction_worker
     """
+    # Handle explicit initialization greeting path
+    if state.get("init_greeting"):
+        print(f"[ROUTING] Initial greeting requested, skipping extraction")
+        return "supervisor"
+
     if state.get("error"):
         print(f"[ROUTING] Error detected, routing to error_handler")
         return "error_handler"
