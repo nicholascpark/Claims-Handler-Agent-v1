@@ -1,5 +1,25 @@
 import { useEffect, useRef } from 'react'
 
+function formatTimestamp(ts) {
+  if (!ts) return ''
+  let d = null
+  if (typeof ts === 'number') {
+    d = new Date(ts)
+  } else if (ts instanceof Date) {
+    d = ts
+  } else if (typeof ts === 'string' && /^\d{2}:\d{2}(:\d{2})?$/.test(ts)) {
+    const [h, m, s = '0'] = ts.split(':')
+    const now = new Date()
+    now.setHours(parseInt(h, 10), parseInt(m, 10), parseInt(s, 10), 0)
+    d = now
+  } else {
+    const parsed = new Date(ts)
+    if (!isNaN(parsed.getTime())) d = parsed
+  }
+  if (!d) return String(ts)
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
 function ChatHistory({ messages }) {
   const messagesEndRef = useRef(null)
 
@@ -80,7 +100,7 @@ function ChatHistory({ messages }) {
                       {/* Timestamp */}
                       {msg.timestamp && (
                         <p className={`text-xs mt-1 ${msg.role === 'user' ? 'text-gray-600' : 'text-gray-400'}`}>
-                          {msg.timestamp}
+                          {formatTimestamp(msg.timestamp)}
                         </p>
                       )}
                       

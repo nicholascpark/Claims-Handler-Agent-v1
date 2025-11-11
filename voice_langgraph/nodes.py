@@ -194,8 +194,16 @@ Recent conversation:
                 elif any(word in last_assistant_msg for word in ["address", "location", "where", "street", "zip"]):
                     disambiguation_rules += "\nIMPORTANT: The assistant just asked for LOCATION information. Address/location data should be classified as incident_street_address or incident_zip_code."
         
+        image_guidance = """
+IMPORTANT: If the conversation contains a line starting with "User attached an image file:",
+interpret it as a concise description of the uploaded photo. Integrate those details into the appropriate
+fields (for example: property_damage.points_of_impact, property_damage.damage_description, or personal_injury).
+When helpful, infer likely points of impact such as "rear bumper", "front windshield", "driver-side window", etc.
+"""
+
         extraction_prompt = f"""{extraction_context}
 {disambiguation_rules}
+{image_guidance}
 
 Extract claim information into the PropertyClaim schema with careful attention to field classification based on the conversation context."""
         

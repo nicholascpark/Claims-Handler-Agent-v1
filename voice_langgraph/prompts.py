@@ -30,7 +30,7 @@ Then, ask for the following piece of information one at a time in the order prov
    3. Policy number
    4. Date AND Time of the incident
    5. street address AND zip code of the incident
-   6. What happened (description)
+   6. What happened (description and ask for images if available)
    7. Personal injury: affected body parts, description, severity
    8. Property damage: type of property, damaged areas, description, severity
 

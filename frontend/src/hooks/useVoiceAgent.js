@@ -1,7 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/voice'
+// Derive a safe default WebSocket URL in production when VITE_WS_URL is not provided.
+// - Prefer env var when available
+// - On HTTPS origins, force wss:// with current host
+// - On HTTP (local dev), allow ws:// with localhost fallback
+const WS_URL = (() => {
+  const envUrl = import.meta.env.VITE_WS_URL && String(import.meta.env.VITE_WS_URL).trim()
+  if (envUrl) return envUrl
+
+  if (typeof window !== 'undefined' && window.location) {
+    const { protocol, host } = window.location
+    const isSecure = protocol === 'https:'
+    const wsScheme = isSecure ? 'wss' : 'ws'
+    return `${wsScheme}://${host}/ws/voice`
+  }
+
+  return 'ws://localhost:8000/ws/voice'
+})()
 const RECONNECT_DELAY = 3000
+
+// For worklets, prefer absolute '/static/' so FastAPI and dev both serve them
 
 export function useVoiceAgent() {
   const [isConnected, setIsConnected] = useState(false)
@@ -196,8 +214,9 @@ export function useVoiceAgent() {
         await audioContext.resume()
       }
 
-      // Load playback worklet
-      await audioContext.audioWorklet.addModule('/audio-playback-worklet.js')
+      // Load playback worklet via bundler URL to ensure it is emitted and served
+      const playbackUrl = new URL('../worklets/audio-playback-worklet.js', import.meta.url)
+      await audioContext.audioWorklet.addModule(playbackUrl)
       const playbackNode = new AudioWorkletNode(audioContext, 'audio-playback-worklet')
       playbackNode.connect(audioContext.destination)
       playbackWorkletRef.current = playbackNode
@@ -230,8 +249,9 @@ export function useVoiceAgent() {
       }
       mediaStreamRef.current = stream
 
-      // Load audio processor worklet for microphone
-      await audioContext.audioWorklet.addModule('/audio-processor-worklet.js')
+      // Load audio processor worklet via bundler URL
+      const processorUrl = new URL('../worklets/audio-processor-worklet.js', import.meta.url)
+      await audioContext.audioWorklet.addModule(processorUrl)
       const source = audioContext.createMediaStreamSource(stream)
       const processorNode = new AudioWorkletNode(audioContext, 'audio-processor-worklet')
       
@@ -461,17 +481,7 @@ export function useVoiceAgent() {
         mimeType: imageData.mimeType,
         name: imageData.name
       }))
-      
-      // Optimistically add to UI with preview
-      setMessages(prev => [...prev, {
-        role: 'user',
-        content: `Sent image: ${imageData.name}`,
-        image: `data:${imageData.mimeType};base64,${imageData.data}`,
-        imageName: imageData.name,
-        type: 'image',
-        timestamp: new Date().toLocaleTimeString()
-      }])
-      
+
       console.log('Sent image:', imageData.name, imageData.mimeType)
     } else {
       console.warn('Cannot send image: WebSocket not connected or session inactive')

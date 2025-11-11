@@ -24,7 +24,7 @@ azure-identity
 # Audio processing
 sounddevice
 numpy
-pyaudio
+# pyaudio
 
 # WebSocket client for Realtime API
 websockets

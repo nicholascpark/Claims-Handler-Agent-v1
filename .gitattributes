@@ -1,0 +1,12 @@
+* text=auto
+
+# Ensure shell scripts use LF endings on Linux hosts
+*.sh text eol=lf
+
+
+
+
+
+
+
+

@@ -1,11 +1,12 @@
 function Header() {
+  const logoSrc = '/intactbot_logo.png'
   return (
     <header className="bg-white border-b border-gray-200 shadow-sm">
       <div className="px-6 py-4 flex items-center justify-between">
         {/* Logo */}
         <div className="flex items-center space-x-3">
           <img 
-            src="/intactbot_logo.png" 
+            src={logoSrc} 
             alt="IntactBot Logo" 
             className="h-12 w-auto"
           />
@@ -22,7 +23,7 @@ function Header() {
         {/* Company Branding */}
         <div className="hidden md:block text-right">
           <p className="text-lg font-semibold text-gray-900">
-            Intact Specialty Insurance
+            Intact Specialty Insurance Solutions
           </p>
           <p className="text-sm text-gray-600">Claims Department</p>
         </div>

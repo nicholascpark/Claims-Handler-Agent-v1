@@ -13,7 +13,11 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from time import monotonic
-import sounddevice as sd
+# Optional audio dependency; unavailable on many server images
+try:
+    import sounddevice as sd  # type: ignore
+except Exception:
+    sd = None  # type: ignore
 import pytz
 import aiohttp
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType
@@ -37,6 +41,9 @@ class AudioProcessor:
         
     def select_microphone(self) -> bool:
         """Interactive microphone selection."""
+        if sd is None:
+            print("❌ Audio input not available in this environment")
+            return False
         try:
             devices = sd.query_devices()
             input_devices = []
@@ -108,6 +115,8 @@ class AudioProcessor:
     
     async def stream_microphone(self) -> AsyncGenerator[bytes, None]:
         """Stream audio from microphone."""
+        if sd is None:
+            raise RuntimeError("Audio input not available in this environment")
         loop = asyncio.get_event_loop()
         queue = asyncio.Queue()
         
@@ -148,7 +157,7 @@ class AudioPlayback:
         self.chunk_size = chunk_size
         self.dtype = dtype
         self.buffer = bytearray()
-        self.stream: Optional[sd.OutputStream] = None
+        self.stream: Optional[Any] = None
         self._lock = asyncio.Lock()
         # Prebuffer to reduce underruns on network jitter (increase to ~600ms)
         bytes_per_second = self.sample_rate * self.channels * 2  # int16 = 2 bytes
@@ -204,6 +213,8 @@ class AudioPlayback:
             
     def start(self):
         """Start audio playback stream."""
+        if sd is None:
+            return
         if self.stream is None:
             self.stream = sd.OutputStream(
                 samplerate=self.sample_rate,

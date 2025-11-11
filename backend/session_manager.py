@@ -41,7 +41,8 @@ from voice_langgraph.utils import (
     decode_audio,
     get_timestamp
 )
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_openai import AzureChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,15 @@ class VoiceSession:
         # Realtime API connection
         self.realtime_ws: Optional[RealtimeWSManager] = None
         self.audio_playback: Optional[AudioPlayback] = None
+        
+        # Vision-capable chat model (for image captioning to feed LangGraph)
+        self._vision_llm = AzureChatOpenAI(
+            azure_deployment=voice_settings.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME,
+            azure_endpoint=voice_settings.AZURE_OPENAI_ENDPOINT,
+            api_key=voice_settings.AZURE_OPENAI_API_KEY,
+            api_version=voice_settings.AZURE_OPENAI_CHAT_API_VERSION,
+            temperature=0.0,
+        )
         
         # Control flags
         self._greeting_sent = False
@@ -221,7 +231,7 @@ class VoiceSession:
             if pause_mic:
                 self._accept_audio_streaming = False
             try:
-                logger.info(f"[{self.session_id}] 🔒 Turn locked by {source} (pause_mic={pause_mic})")
+                logger.debug(f"[{self.session_id}] 🔒 Turn locked by {source} (pause_mic={pause_mic})")
             except Exception:
                 pass
 
@@ -232,7 +242,7 @@ class VoiceSession:
             self._turn_source = None
         self._accept_audio_streaming = True
         try:
-            logger.info(f"[{self.session_id}] 🔓 Turn unlocked; mic accept={self._accept_audio_streaming}")
+            logger.debug(f"[{self.session_id}] 🔓 Turn unlocked; mic accept={self._accept_audio_streaming}")
         except Exception:
             pass
 
@@ -318,7 +328,7 @@ class VoiceSession:
                         pass
                 if should_finalize:
                     try:
-                        logger.info(f"[{self.session_id}] 🔚 TTS drain complete; sending agent_ready")
+                        logger.debug(f"[{self.session_id}] 🔚 TTS drain complete; sending agent_ready")
                         await self.websocket.send_json({"type": "agent_ready", "data": {}})
                     except Exception:
                         pass
@@ -500,33 +510,34 @@ class VoiceSession:
         except Exception as e:
             logger.error(f"[{self.session_id}] Error sending text: {e}")
     
+    async def _describe_image(self, image_b64: str, mime_type: str) -> str:
+        """Summarize the uploaded image into a short, claim-relevant phrase."""
+        try:
+            messages = [
+                SystemMessage(content=(
+                    "You are an insurance claim intake assistant. "
+                    "Describe, in at most 12 words, the most relevant damage or injury indicators visible. "
+                    "Return a concise noun phrase only (no punctuation, no extra commentary)."
+                )),
+                HumanMessage(content=[
+                    {"type": "text", "text": "Describe this image for insurance claim intake."},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}},
+                ]),
+            ]
+            resp = await self._vision_llm.ainvoke(messages)
+            desc = str(getattr(resp, "content", "")).strip()
+            return desc or "image provided"
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Image captioning failed: {e}")
+            return "image provided"
+
     async def handle_image_input(self, image_data: str, mime_type: str, name: str = None):
         """Handle image input from client."""
         if not self.is_active or not self.realtime_ws:
             return
         
         try:
-            # Prepare image content for Realtime API
-            # The Realtime API accepts images as base64 in the content array
-            image_content = {
-                "type": "input_image",
-                "image": image_data,
-                "mime_type": mime_type
-            }
-            
-            # Send as conversation item with image
-            await self.realtime_ws.send({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [image_content]
-                }
-            })
-            
-            logger.info(f"[{self.session_id}] Sent image: {name} ({mime_type})")
-            
-            # Add to conversation history
+            # Add to conversation history (for UI and logs)
             self.conversation_history.append({
                 "role": "user",
                 "content": f"Sent image: {name or 'Unnamed'}",
@@ -548,8 +559,18 @@ class VoiceSession:
                     "timestamp": get_timestamp()
                 }
             })
+
+            # Generate a concise description for LangGraph and process as a text turn
+            description = await self._describe_image(image_data, mime_type)
+            user_text = f"User attached an image file: {description}."
+
+            # Lock the turn as text and route via LangGraph (Realtime remains talker only)
+            self._lock_turn("text")
+            await self._run_langgraph_workflow(user_text)
+
+            logger.info(f"[{self.session_id}] Processed image: {name} ({mime_type}) -> {description}")
         except Exception as e:
-            logger.error(f"[{self.session_id}] Error sending image: {e}")
+            logger.error(f"[{self.session_id}] Error handling image: {e}")
     
     async def _realtime_event_loop(self):
         """Process events from Realtime API."""
@@ -588,10 +609,10 @@ class VoiceSession:
                 rid = self._extract_response_id(event)
                 # Drop audio from unexpected/cancelled responses to avoid blending
                 if self._current_response_id is not None and rid and rid != self._current_response_id:
-                    logger.debug(f"[{self.session_id}] Dropping audio delta from non-current response id={rid}")
+                    logger.debug(f"[{self.session_id}] Drop audio delta (non-current rid={rid})")
                     return
                 if rid and rid in self._unexpected_response_ids:
-                    logger.debug(f"[{self.session_id}] Dropping audio delta from unexpected response id={rid}")
+                    logger.debug(f"[{self.session_id}] Drop audio delta (unexpected rid={rid})")
                     return
                 audio_b64 = event.get("delta", "") or event.get("audio", "") or event.get("chunk", "")
                 if audio_b64:
@@ -612,11 +633,9 @@ class VoiceSession:
                     audio_ms = int(self._resp_total_bytes / bytes_per_second * 1000)
                     elapsed_ms = int((now - self._resp_started_at) * 1000) if self._resp_started_at else -1
                     overspeed = (round(audio_ms / elapsed_ms, 2) if elapsed_ms > 0 else -1)
-                    if self._resp_delta_counter <= 3 or (self._resp_delta_counter % 100 == 0):
-                        logger.info(
-                            f"[{self.session_id}] 🔈 audio.delta #{self._resp_delta_counter} "
-                            f"(id={rid or 'unknown'}): {chunk_bytes} bytes, interval={interval_ms}ms, "
-                            f"total={self._resp_total_bytes} bytes, audio_ms={audio_ms}, elapsed_ms={elapsed_ms}, overspeed={overspeed}x"
+                    if self._resp_delta_counter <= 2 or (self._resp_delta_counter % 200 == 0):
+                        logger.debug(
+                            f"[{self.session_id}] 🔈 delta#{self._resp_delta_counter} {chunk_bytes}B intv={interval_ms}ms audio={audio_ms}ms elaps={elapsed_ms}ms x{overspeed}"
                         )
                     await self._enqueue_tts_audio(audio_b64)
             
@@ -633,10 +652,9 @@ class VoiceSession:
                             bytes_per_second = 24000 * 2
                             audio_ms = int(self._resp_total_bytes / bytes_per_second * 1000)
                             overspeed = (round(audio_ms / last_ms, 2) if last_ms > 0 else -1)
-                            logger.info(
-                                f"[{self.session_id}] ✅ response.audio_transcript.done (rid={self._current_response_id or 'unknown'}) "
-                                f"deltas={self._resp_delta_counter}, total_bytes={self._resp_total_bytes}, "
-                                f"first_delta_after={first_ms}ms, duration_since_first={last_ms}ms, audio_ms={audio_ms}, overspeed={overspeed}x"
+                            logger.debug(
+                                f"[{self.session_id}] ✅ transcript.done (rid={self._current_response_id or 'unknown'}) "
+                                f"deltas={self._resp_delta_counter}, total={self._resp_total_bytes}B, first={first_ms}ms, dur={last_ms}ms, audio={audio_ms}ms, x{overspeed}"
                             )
                         except Exception:
                             pass
@@ -762,7 +780,7 @@ class VoiceSession:
                     self._tts_drain_after_response = False
                     self._tts_stream_rid = rid
                     self._tts_last_send_ts = 0.0
-                logger.info(f"[{self.session_id}] 🟢 response.created for LangGraph reply (id={rid or 'unknown'})")
+                logger.info(f"[{self.session_id}] 🟢 response.created (id={rid or 'unknown'})")
             
             elif event_type == "conversation.item.created":
                 # Handle user message
@@ -820,8 +838,8 @@ class VoiceSession:
                     bytes_per_second = 24000 * 2
                     audio_ms = int(self._resp_total_bytes / bytes_per_second * 1000)
                     overspeed = (round(audio_ms / duration_ms, 2) if duration_ms > 0 else -1)
-                    logger.info(
-                        f"[{self.session_id}] 🏁 response.done (rid={rid or 'unknown'}) deltas={self._resp_delta_counter}, total_bytes={self._resp_total_bytes}, duration_ms={duration_ms}, audio_ms={audio_ms}, overspeed={overspeed}x"
+                    logger.debug(
+                        f"[{self.session_id}] 🏁 response.done (rid={rid or 'unknown'}) deltas={self._resp_delta_counter}, total={self._resp_total_bytes}B, dur={duration_ms}ms, audio={audio_ms}ms, x{overspeed}"
                     )
                 except Exception:
                     pass
@@ -858,24 +876,26 @@ class VoiceSession:
     
     async def _run_langgraph_workflow(self, user_message: str, init_greeting: bool = False):
         """Run the LangGraph workflow and speak the assistant reply via Realtime."""
-        # Record the user message locally and optionally echo to UI for voice input
+        # Record the user message locally and only echo to UI when it originates from voice
+        # Typed inputs are already optimistically rendered by the frontend
         if not init_greeting and user_message:
+            is_audio_turn = (self._turn_source == "audio")
             self.conversation_history.append({
                 "role": "user",
                 "content": user_message,
-                "type": "voice",
+                "type": "voice" if is_audio_turn else "text",
                 "timestamp": get_timestamp()
             })
-            # Echo only voice messages (typed messages are optimistically added by UI)
-            await self.websocket.send_json({
-                "type": "chat_message",
-                "data": {
-                    "role": "user",
-                    "content": user_message,
-                    "type": "voice",
-                    "timestamp": get_timestamp()
-                }
-            })
+            if is_audio_turn:
+                await self.websocket.send_json({
+                    "type": "chat_message",
+                    "data": {
+                        "role": "user",
+                        "content": user_message,
+                        "type": "voice",
+                        "timestamp": get_timestamp()
+                    }
+                })
 
         try:
             # Build state
