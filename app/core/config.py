@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # ===========================================
     # Application Settings
     # ===========================================
-    app_name: str = Field(default="Kismet Voice Agent", description="Application name")
+    app_name: str = Field(default="Notera Voice Agent", description="Application name")
     app_version: str = Field(default="2.0.0", description="Application version")
     environment: str = Field(default="development", description="Environment: development, staging, production")
     debug: bool = Field(default=False, description="Enable debug mode")
@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # Observability
     # ===========================================
     langsmith_api_key: Optional[str] = Field(default=None, description="LangSmith API key for tracing")
-    langsmith_project: str = Field(default="kismet-voice-agent", description="LangSmith project name")
+    langsmith_project: str = Field(default="notera-voice-agent", description="LangSmith project name")
     enable_tracing: bool = Field(default=False, description="Enable LangSmith tracing")
     
     class Config:

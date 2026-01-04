@@ -67,7 +67,7 @@ Create `render.yaml`:
 ```yaml
 services:
   - type: web
-    name: kismet-voice-agent
+    name: notera-voice-agent
     env: python
     buildCommand: |
       pip install -r requirements.txt

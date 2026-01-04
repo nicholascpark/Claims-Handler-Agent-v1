@@ -56,7 +56,7 @@ export const ChatInterface = () => {
             {isLoading && (
               <div className="flex items-center gap-2 text-slate-400 ml-12 text-sm animate-pulse">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Kismet is thinking...</span>
+                <span>Notera is thinking...</span>
               </div>
             )}
             <div ref={messagesEndRef} />

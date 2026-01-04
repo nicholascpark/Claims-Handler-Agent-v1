@@ -1,7 +1,7 @@
 """
 FastAPI Application
 
-Main entry point for the Kismet Voice Agent API.
+Main entry point for the Notera Voice Agent API.
 """
 
 import logging

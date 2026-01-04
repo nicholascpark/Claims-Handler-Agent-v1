@@ -1,4 +1,4 @@
-# Kismet Voice Agent
+# Notera Voice Agent
 
 A multi-modal Voice AI Claims Intake Agent built with LangGraph, OpenAI, and modern async Python. Supports voice-first interactions for First Notice of Loss (FNOL) claims processing.
 

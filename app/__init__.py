@@ -1,5 +1,5 @@
 """
-Kismet Voice Agent - Multi-Modal Voice AI Claims Intake System
+Notera Voice Agent - Multi-Modal Voice AI Claims Intake System
 
 A production-ready, voice-first claims intake agent built with:
 - LangGraph for stateful conversation management
@@ -12,4 +12,4 @@ First Notice of Loss (FNOL) claims processing.
 """
 
 __version__ = "2.0.0"
-__app_name__ = "Kismet Voice Agent"
+__app_name__ = "Notera Voice Agent"

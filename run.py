@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kismet Voice Agent - Run Script
+Notera Voice Agent - Run Script
 
 Start the backend server.
 """
@@ -11,7 +11,7 @@ from app.core.config import settings
 if __name__ == "__main__":
     print(f"""
 ╔═══════════════════════════════════════════════════════════════╗
-║                   Kismet Voice Agent                          ║
+║                   Notera Voice Agent                          ║
 ║            Multi-Modal Voice AI Claims Intake                 ║
 ╚═══════════════════════════════════════════════════════════════╝
 
