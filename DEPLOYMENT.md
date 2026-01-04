@@ -1,117 +1,140 @@
-# Deployment Guide for Render
+# Deployment Guide
 
-This guide will help you deploy your IntactBot FNOL Agent to Render.
+## Local Development
 
-## Prerequisites
+### Prerequisites
+- Python 3.10+
+- Node.js 18+
+- OpenAI API Key
 
-1. A Render account (sign up at [render.com](https://render.com))
-2. Your Azure OpenAI credentials
-3. This repository pushed to GitHub/GitLab
+### Quick Start
 
-## Deployment Steps
+```bash
+# Backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your OPENAI_API_KEY
+python run.py
 
-### 1. Connect Your Repository
-
-1. Go to your Render dashboard
-2. Click "New +" and select "Blueprint"
-3. Connect your GitHub/GitLab repository
-4. Render will automatically detect the `render.yaml` file
-
-### 2. Set Environment Variables
-
-In the Render dashboard, you'll need to set these environment variables for the **backend service**:
-
-#### Required Variables
-```
-AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
-AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
-AZURE_OPENAI_API_VERSION=2025-01-01-preview
-AZURE_DEPLOYMENT_NAME=gpt-4o-quick
-AZURE_STT_DEPLOYMENT_NAME=whisper
-AZURE_TTS_DEPLOYMENT_NAME=tts
+# Frontend (new terminal)
+cd web
+npm install
+npm run dev
 ```
 
-#### Optional Variables
+## Production Deployment
+
+### Option 1: Docker
+
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Node.js for frontend build
+RUN apt-get update && apt-get install -y nodejs npm
+
+# Backend dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Frontend build
+COPY web/package*.json ./web/
+RUN cd web && npm ci
+
+COPY web/ ./web/
+RUN cd web && npm run build
+
+# Backend code
+COPY app/ ./app/
+COPY run.py .
+
+# Serve frontend from FastAPI
+ENV STATIC_FILES_DIR=/app/web/dist
+
+EXPOSE 8000
+
+CMD ["python", "run.py"]
 ```
-OPENAI_API_KEY=your_openai_api_key_here
-TEMPERATURE=0.1
-MAX_TOKENS=1000
-ENABLE_LLM_CACHING=true
-ENABLE_PAYLOAD_CACHING=true
+
+### Option 2: Render
+
+Create `render.yaml`:
+
+```yaml
+services:
+  - type: web
+    name: kismet-voice-agent
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      cd web && npm ci && npm run build
+    startCommand: python run.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PORT
+        value: 8000
 ```
 
-### 3. Deploy
+### Option 3: Railway
 
-1. After connecting your repo and setting environment variables, click "Apply"
-2. Render will build and deploy both services:
-   - **Backend**: Python API service
-   - **Frontend**: Static React site
+```bash
+# railway.json
+{
+  "build": {
+    "builder": "nixpacks"
+  },
+  "deploy": {
+    "startCommand": "python run.py"
+  }
+}
+```
 
-### 4. Service URLs
+Set environment variables in Railway dashboard:
+- `OPENAI_API_KEY`
+- `PORT=8000`
 
-After deployment, you'll get URLs like:
-- Backend: `https://intactbot-backend-xxx.onrender.com`
-- Frontend: `https://intactbot-frontend-xxx.onrender.com`
+## Environment Variables
 
-The frontend will automatically be configured to use the backend URL.
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | Yes | - | OpenAI API key |
+| `OPENAI_MODEL` | No | `gpt-4o` | LLM model |
+| `OPENAI_TEMPERATURE` | No | `0.7` | Response creativity |
+| `STT_MODEL` | No | `whisper-1` | Speech-to-text model |
+| `TTS_MODEL` | No | `tts-1` | Text-to-speech model |
+| `TTS_VOICE` | No | `nova` | TTS voice |
+| `DEFAULT_LANGUAGE` | No | `en` | Default language |
+| `HOST` | No | `0.0.0.0` | Server host |
+| `PORT` | No | `8000` | Server port |
 
-## Manual Deployment (Alternative)
+## Health Checks
 
-If you prefer to deploy services individually:
+```bash
+# Check API health
+curl http://localhost:8000/api/health
 
-### Backend Service
+# Response
+{"status": "healthy", "version": "1.0.0"}
+```
 
-1. Create a new "Web Service" in Render
-2. Connect your repository
-3. Set these build settings:
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `python backend.py`
-   - **Environment**: `Python 3`
-4. Add the environment variables listed above
+## Scaling Considerations
 
-### Frontend Service
+1. **Session Storage**: Current implementation uses in-memory storage. For production, configure Redis or PostgreSQL.
 
-1. Create a new "Static Site" in Render
-2. Connect your repository
-3. Set these build settings:
-   - **Build Command**: `cd frontend && npm ci && npm run build`
-   - **Publish Directory**: `frontend/build`
-   - **Environment Variables**: 
-     - `REACT_APP_API_URL`: Set to your backend service URL
+2. **Rate Limiting**: Add rate limiting middleware for production.
 
-## Testing Your Deployment
+3. **CORS**: Configure `CORS_ORIGINS` for your domains.
 
-1. Visit your frontend URL
-2. The app should load and connect to the backend
-3. Test the chat functionality
-4. Check the `/health` endpoint on your backend URL
+4. **SSL**: Use a reverse proxy (nginx, Caddy) for HTTPS.
 
-## Troubleshooting
+## Monitoring
 
-### Common Issues
-
-1. **CORS Errors**: Make sure your frontend URL is properly configured in the backend CORS settings
-2. **Environment Variables**: Double-check all required variables are set
-3. **Build Failures**: Check the build logs in Render dashboard
-
-### Health Check
-
-Visit `https://your-backend-url.onrender.com/health` to verify the backend is running.
-
-## Updating Your Deployment
-
-1. Push changes to your repository
-2. Render will automatically rebuild and redeploy
-3. For environment variable changes, update them in the Render dashboard
-
-## Cost Optimization
-
-- Both services are configured to use the "Starter" plan
-- Consider upgrading to "Standard" plan for production use
-- The backend will sleep after 15 minutes of inactivity on the free tier
-
-## Security Notes
-
-- Never commit API keys to your repository
-- Use Render's environment variable system for sensitive data
-- Consider restricting CORS origins for production use 
+Recommended monitoring setup:
+- Application logs via stdout
+- OpenAI API usage via OpenAI dashboard
+- Error tracking via Sentry (optional)

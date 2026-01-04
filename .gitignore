@@ -264,6 +264,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Frontend build output
+web/dist/
+
 # Compiled files
 *.pyc
 *.pyo

@@ -1,165 +1,230 @@
-# Claims Handler Agent v1
+# Kismet Voice Agent
 
-An intelligent First Notice of Loss (FNOL) claims processing agent built with LangGraph, Azure OpenAI, and modern async Python.
+A multi-modal Voice AI Claims Intake Agent built with LangGraph, OpenAI, and modern async Python. Supports voice-first interactions for First Notice of Loss (FNOL) claims processing.
 
-## 🚀 Performance Optimizations
+## Features
 
-This application has been thoroughly optimized for speed and efficiency:
+- **Voice-First Design**: Primary interaction via voice with text fallback
+- **Multi-Language Support**: English, Spanish, and French
+- **Real-Time Transcription**: OpenAI Whisper STT
+- **Natural TTS Responses**: OpenAI Text-to-Speech
+- **Intelligent Extraction**: LangGraph-powered claim data extraction
+- **Modern Web UI**: React + TypeScript + Tailwind CSS frontend
+- **Conversation Persistence**: SQLite-based session storage
 
-### ⚡ Key Performance Improvements
+## Architecture
 
-1. **LLM Instance Caching**: Singleton pattern prevents expensive re-creation of LLM clients
-2. **HTTP Connection Pooling**: Reusable aiohttp sessions with optimized settings
-3. **Async Operations**: Full async/await implementation for better concurrency
-4. **Memory Efficiency**: Optimized state management and data structures
-5. **Smart Caching**: Payload formatting and logo loading are cached
-6. **Lazy Loading**: SSL and HTTP libraries loaded only when needed
-7. **Early Returns**: Optimized validation with short-circuit evaluation
-
-### 🔧 Configuration for Performance
-
-The application supports several performance-related environment variables:
-
-```bash
-# Performance Settings
-TEMPERATURE=0.1                    # Lower for faster responses
-MAX_TOKENS=1000                   # Limit response length
-MAX_RETRIES=2                     # Faster failure handling
-HTTP_TIMEOUT=30                   # HTTP request timeout
-API_TIMEOUT=20                    # API-specific timeout
-
-# Caching (enabled by default)
-ENABLE_LLM_CACHING=true          # Cache LLM instances
-ENABLE_PAYLOAD_CACHING=true      # Cache formatted payloads
-DEBUG_MODE=false                 # Disable debug features for speed
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Web Frontend  │────▶│   FastAPI API   │────▶│  LangGraph Agent│
+│  (React + TS)   │◀────│   (Python)      │◀────│  (GPT-4o)       │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+         │                       │
+         │                       │
+         ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│  Voice Recording│     │  OpenAI Services│
+│  (MediaRecorder)│     │  (Whisper + TTS)│
+└─────────────────┘     └─────────────────┘
 ```
 
-### 📊 Performance Benchmarks
+## Quick Start
 
-**Before Optimization:**
-- Startup time: ~8-12 seconds
-- LLM test calls: 2-5 seconds each
-- Redundant JSON formatting on every UI update
-- Multiple LLM instance creations
+### Prerequisites
 
-**After Optimization:**
-- Startup time: ~2-4 seconds
-- LLM initialization: Instantaneous (cached)
-- UI updates: ~50ms (cached formatting)
-- Single LLM instances with reuse
+- Python 3.10+
+- Node.js 18+
+- OpenAI API Key
 
-### 🎯 Usage for Maximum Performance
+### 1. Clone and Setup
 
-1. **Use cached instances**: LLM instances are automatically cached
-2. **Enable debug mode sparingly**: Use `--debug` flag only when needed
-3. **Monitor memory**: Large conversations may require periodic resets
-4. **Connection pooling**: HTTP sessions are automatically reused
-
-## 🛠️ Installation & Setup
-
-1. **Install dependencies** (optimized order for faster installs):
 ```bash
+git clone https://github.com/nicholascpark/Claims-Handler-Agent-v1.git
+cd Claims-Handler-Agent-v1
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install Python dependencies
 pip install -r requirements.txt
+
+# Install frontend dependencies
+cd web && npm install && cd ..
 ```
 
-2. **Set environment variables**:
+### 2. Configure Environment
+
 ```bash
-# Required
-AZURE_OPENAI_API_KEY=your_azure_key
-
-# Optional performance tuning
-TEMPERATURE=0.1
-MAX_TOKENS=1000
-ENABLE_LLM_CACHING=true
+cp .env.example .env
+# Edit .env and add your OpenAI API key
 ```
 
-3. **Run the application**:
+Required environment variables:
 
-**Command Line Interface:**
 ```bash
-python main.py                # Normal mode
-python main.py --debug       # Debug mode with Mermaid graph
+OPENAI_API_KEY=sk-your-openai-api-key
 ```
 
-**Web UI:**
+Optional configuration:
+
 ```bash
-python UI/app.py
+# Model Settings
+OPENAI_MODEL=gpt-4o
+OPENAI_TEMPERATURE=0.7
+OPENAI_MAX_TOKENS=1000
+
+# Voice Settings
+STT_MODEL=whisper-1
+TTS_MODEL=tts-1
+TTS_VOICE=nova
+
+# Language
+DEFAULT_LANGUAGE=en  # en, es, fr
+
+# Server
+HOST=0.0.0.0
+PORT=8000
 ```
 
-## 🏗️ Architecture
+### 3. Run the Application
 
-The application uses a highly optimized LangGraph workflow:
+**Start the Backend:**
 
+```bash
+python run.py
+# Server runs at http://localhost:8000
 ```
-User Input → Agent Node → [API Tool] → Extractor Node → Updated State
+
+**Start the Frontend (separate terminal):**
+
+```bash
+cd web
+npm run dev
+# Frontend runs at http://localhost:5173
 ```
 
-### Performance-Optimized Components:
+### 4. Use the Application
 
-- **State Management**: Memory-efficient TypedDict with lazy evaluation
-- **Tool Execution**: Connection pooling and async error handling
-- **Data Extraction**: Cached validation and smart payload diffing
-- **UI Rendering**: Cached formatting and optimized updates
+1. Open http://localhost:5173 in your browser
+2. Allow microphone access when prompted
+3. Click the microphone button to start speaking
+4. Describe your insurance claim naturally
+5. Watch as the AI extracts claim details in real-time
 
-## 📁 Project Structure
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/chat/start` | POST | Start new conversation, get greeting |
+| `/api/chat/message` | POST | Send text message |
+| `/api/chat/voice` | POST | Send voice message (base64 audio) |
+| `/api/chat/{thread_id}/payload` | GET | Get extracted claim data |
+| `/api/chat/{thread_id}/history` | GET | Get conversation history |
+| `/api/chat/{thread_id}` | DELETE | Reset conversation |
+| `/api/health` | GET | Health check |
+
+## Project Structure
 
 ```
 Claims-Handler-Agent-v1/
-├── main.py                 # Optimized CLI entry point
-├── requirements.txt        # Performance-ordered dependencies
-├── config/
-│   └── settings.py        # Performance configuration
-├── src/
-│   ├── builder.py         # Optimized graph construction
-│   ├── nodes.py           # Async node implementations
-│   ├── state.py           # Memory-efficient state management
-│   ├── tools.py           # Connection-pooled API tools
-│   ├── utils.py           # Cached utility functions
-│   ├── schema.py          # Pydantic data models
-│   └── prompts.py         # LLM prompts
-└── UI/
-    └── app.py            # Optimized Gradio interface
+├── app/                      # Backend application
+│   ├── api/
+│   │   ├── main.py          # FastAPI app factory
+│   │   └── routes/
+│   │       ├── chat.py      # Chat endpoints
+│   │       └── health.py    # Health endpoints
+│   ├── agents/
+│   │   ├── fnol_agent.py    # LangGraph FNOL agent
+│   │   ├── prompts.py       # Multi-language prompts
+│   │   └── tools.py         # Agent tools
+│   ├── core/
+│   │   └── config.py        # Settings management
+│   ├── models/
+│   │   ├── claim.py         # FNOL data models
+│   │   └── conversation.py  # Conversation models
+│   └── services/
+│       ├── llm/             # OpenAI LLM service
+│       ├── voice/           # STT/TTS services
+│       └── persistence/     # Database service
+├── web/                      # Frontend application
+│   ├── src/
+│   │   ├── components/      # React components
+│   │   ├── hooks/           # Custom hooks
+│   │   ├── services/        # API client
+│   │   └── types/           # TypeScript types
+│   └── public/              # Static assets
+├── .env.example             # Environment template
+├── requirements.txt         # Python dependencies
+├── run.py                   # Server startup script
+└── README.md
 ```
 
-## 🔍 Performance Monitoring
+## Claim Data Extracted
 
-To monitor performance:
+The agent extracts the following FNOL information:
 
-1. **Startup metrics**: Check initialization timing in console
-2. **Memory usage**: Monitor via Task Manager or `htop`
-3. **Response times**: Built-in timing in debug mode
-4. **Cache hits**: LLM cache usage logged to console
+- **Incident Date & Time**: When the incident occurred
+- **Incident Location**: Where it happened (address, city, state)
+- **Vehicle Information**: Make, model, year, license plate
+- **Damage Description**: Details of damage sustained
+- **Injury Information**: Any injuries reported
+- **Police Report**: Whether police were involved, report number
+- **Other Party Info**: Information about other parties involved
 
-## 🚨 Troubleshooting Performance Issues
+## Development
 
-**Slow startup?**
-- Check internet connection for Azure OpenAI
-- Verify AZURE_OPENAI_API_KEY is set correctly
-- Disable debug mode if enabled
+### Backend Development
 
-**High memory usage?**
-- Reset conversation periodically in UI
-- Check for memory leaks in custom tools
-- Reduce MAX_TOKENS if set too high
+```bash
+# Run with hot reload
+uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-**Slow responses?**
-- Lower TEMPERATURE for faster completion
-- Reduce MAX_TOKENS for shorter responses
-- Check API_TIMEOUT settings
+### Frontend Development
 
-## 🤝 Contributing
+```bash
+cd web
+npm run dev
+```
 
-When contributing, please maintain performance optimizations:
+### Build for Production
 
-- Use async/await for I/O operations
-- Implement caching for expensive operations
-- Add performance tests for new features
-- Profile code changes before submitting
+```bash
+# Build frontend
+cd web && npm run build
 
-## 📝 License
+# The backend can serve the built frontend from web/dist
+```
 
-[Your License Here]
+## Supported Languages
+
+| Code | Language |
+|------|----------|
+| `en` | English |
+| `es` | Spanish (Espa-ol) |
+| `fr` | French (Francais) |
+
+## Troubleshooting
+
+**Microphone not working?**
+- Ensure browser has microphone permissions
+- Check if another application is using the microphone
+- Try refreshing the page
+
+**API errors?**
+- Verify `OPENAI_API_KEY` is set correctly
+- Check API key has access to required models (gpt-4o, whisper-1, tts-1)
+- Ensure sufficient API credits
+
+**Audio playback issues?**
+- Check browser audio permissions
+- Some browsers block auto-play - click to interact first
+
+## License
+
+MIT License
 
 ---
 
-💡 **Performance Tip**: For production deployments, consider using Redis for state persistence and load balancers for horizontal scaling. 
+Built with LangGraph, OpenAI, FastAPI, and React.
