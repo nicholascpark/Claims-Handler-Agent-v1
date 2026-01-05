@@ -6,7 +6,12 @@ import { useChat } from '../hooks/useChat';
 import { Loader2 } from 'lucide-react';
 import { PayloadDisplay } from './PayloadDisplay';
 
-export const ChatInterface = () => {
+interface ChatInterfaceProps {
+  formId?: string;
+  className?: string;
+}
+
+export const ChatInterface = ({ formId, className }: ChatInterfaceProps) => {
   const { 
     messages, 
     payload, 
@@ -16,7 +21,7 @@ export const ChatInterface = () => {
     initChat, 
     sendMessage, 
     sendAudio 
-  } = useChat();
+  } = useChat(formId);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -24,7 +29,7 @@ export const ChatInterface = () => {
   // Initial load
   useEffect(() => {
     initChat();
-  }, []);
+  }, [formId]); // Re-init if formId changes
 
   // Auto-scroll
   useEffect(() => {
@@ -40,7 +45,7 @@ export const ChatInterface = () => {
   }, [audioUrl]);
 
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-64px)] overflow-hidden bg-slate-50/50">
+    <div className={className || "flex flex-col lg:flex-row h-[calc(100vh-64px)] overflow-hidden bg-slate-50/50"}>
       {/* Audio Player (Hidden) */}
       <audio ref={audioRef} className="hidden" />
 

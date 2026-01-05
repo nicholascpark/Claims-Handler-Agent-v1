@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { ChatMessage, ClaimPayload } from '../types';
 
-export const useChat = () => {
+export const useChat = (formId?: string) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [payload, setPayload] = useState<ClaimPayload>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -13,7 +13,7 @@ export const useChat = () => {
   const initChat = async () => {
     setIsLoading(true);
     try {
-      const data = await api.startChat();
+      const data = await api.startChat(formId);
       setThreadId(data.thread_id);
       setMessages(data.chat_history);
       setPayload(data.payload);

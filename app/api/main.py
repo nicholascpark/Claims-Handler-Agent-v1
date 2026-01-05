@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.api.routes import chat_router, health_router
+from app.api.routes import chat_router, health_router, forms_router, settings_router
 from app.services.persistence import init_database
 
 # Configure logging
@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="Multi-modal Voice AI Agent for Claims Intake",
+        description="No-Code AI Conversational Form Builder",
         lifespan=lifespan,
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
@@ -69,6 +69,8 @@ def create_app() -> FastAPI:
     # Include routers
     application.include_router(health_router)
     application.include_router(chat_router)
+    application.include_router(forms_router)
+    application.include_router(settings_router)
     
     logger.info(f"CORS origins: {settings.cors_origins_list}")
     

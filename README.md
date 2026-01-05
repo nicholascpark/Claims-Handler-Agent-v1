@@ -1,225 +1,242 @@
-# Notera Voice Agent
+# Notera - AI Conversational Form Builder
 
-A multi-modal Voice AI Claims Intake Agent built with LangGraph, OpenAI, and modern async Python. Supports voice-first interactions for First Notice of Loss (FNOL) claims processing.
+**Create AI voice agents that collect information through natural conversation. No code required.**
+
+Build intake agents for **any industry** in minutes - legal, healthcare, real estate, recruiting, and more. Your users speak naturally; the AI extracts structured data in real-time.
+
+## Why Notera?
+
+| Traditional Forms | Notera Voice Agents |
+|-------------------|---------------------|
+| Users abandon long forms | Natural conversation feels effortless |
+| Cold, impersonal experience | Warm, branded voice interactions |
+| Manual data entry errors | AI extracts data accurately |
+| Requires developers to modify | No-code builder, anyone can create |
+
+### Cost Transparency
+
+Notera uses OpenAI APIs with transparent per-conversation pricing:
+
+| Component | Cost | Per Conversation (avg 3 min) |
+|-----------|------|------------------------------|
+| Speech-to-Text (Whisper) | $0.006/min | ~$0.018 |
+| LLM (GPT-4o) | ~$0.01/1K tokens | ~$0.03 |
+| Text-to-Speech | $0.015/1K chars | ~$0.03 |
+| **Total** | | **~$0.08 - $0.15** |
+
+*Compare to: $15-50 per human-handled intake call*
 
 ## Features
 
-- **Voice-First Design**: Primary interaction via voice with text fallback
-- **Multi-Language Support**: English, Spanish, and French
-- **Real-Time Transcription**: OpenAI Whisper STT
-- **Natural TTS Responses**: OpenAI Text-to-Speech
-- **Intelligent Extraction**: LangGraph-powered claim data extraction
-- **Modern Web UI**: React + TypeScript + Tailwind CSS frontend
-- **Conversation Persistence**: SQLite-based session storage
+- **No-Code Builder**: 4-step wizard to create voice agents
+- **7 Industry Templates**: Legal, Healthcare, Real Estate, Home Services, Recruiting, Financial, Insurance
+- **Voice-First Design**: Natural speech with text fallback
+- **Real-Time Extraction**: [trustcall](https://github.com/hinthornw/trustcall) with RFC-6902 JSON patches for efficient data extraction
+- **Customizable Personality**: Agent name, tone, greeting, and voice
+- **Drag-and-Drop Fields**: Define exactly what data to collect
+- **Multi-Language**: English, Spanish, French support
+- **Cost Tracking**: Real-time usage monitoring
+
+## Quick Start
+
+### Option 1: Docker (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/nicholascpark/Claims-Handler-Agent-v1.git
+cd Claims-Handler-Agent-v1
+
+# Copy environment file and add your OpenAI key
+cp .env.example .env
+# Edit .env: OPENAI_API_KEY=sk-your-key
+
+# Start with Docker Compose
+docker-compose up --build
+```
+
+Open http://localhost:3000 and start building your first agent!
+
+### Option 2: Local Development
+
+**Prerequisites**: Python 3.10+, Node.js 18+, OpenAI API Key
+
+```bash
+# Clone and setup
+git clone https://github.com/nicholascpark/Claims-Handler-Agent-v1.git
+cd Claims-Handler-Agent-v1
+
+# Backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Frontend
+cd web && npm install && cd ..
+
+# Configure
+cp .env.example .env
+# Edit .env: OPENAI_API_KEY=sk-your-key
+
+# Run backend (terminal 1)
+python run.py
+
+# Run frontend (terminal 2)
+cd web && npm run dev
+```
+
+Backend: http://localhost:8000 | Frontend: http://localhost:5173
+
+## How It Works
+
+### 1. Choose a Template or Start Fresh
+Select from 7 industry templates with pre-configured fields, or build from scratch.
+
+### 2. Customize Your Agent
+- **Business Profile**: Company name, industry, contact info
+- **Agent Personality**: Name, tone (professional/friendly/empathetic), voice
+- **Custom Fields**: Add, remove, reorder the data you want to collect
+
+### 3. Test & Deploy
+Preview your agent, test conversations, then deploy to your website or phone system.
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Web Frontend  │────▶│   FastAPI API   │────▶│  LangGraph Agent│
-│  (React + TS)   │◀────│   (Python)      │◀────│  (GPT-4o)       │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-         │                       │
-         │                       │
-         ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│  Voice Recording│     │  OpenAI Services│
-│  (MediaRecorder)│     │  (Whisper + TTS)│
-└─────────────────┘     └─────────────────┘
+                                    ┌─────────────────────────────────────┐
+                                    │         Notera Platform             │
+┌──────────────┐                    │  ┌─────────────────────────────┐   │
+│   End User   │◀──── Voice ────────│──│      Voice Agent            │   │
+│  (Customer)  │                    │  │  - Dynamic prompts          │   │
+└──────────────┘                    │  │  - trustcall extraction     │   │
+                                    │  │  - Real-time updates        │   │
+┌──────────────┐                    │  └─────────────────────────────┘   │
+│   Builder    │◀── No-Code UI ─────│──┌─────────────────────────────┐   │
+│   (Admin)    │                    │  │      Form Builder           │   │
+└──────────────┘                    │  │  - Template selection       │   │
+                                    │  │  - Drag-drop fields         │   │
+                                    │  │  - Agent customization      │   │
+                                    │  └─────────────────────────────┘   │
+                                    └─────────────────────────────────────┘
+                                                     │
+                                                     ▼
+                                    ┌─────────────────────────────────────┐
+                                    │           OpenAI APIs               │
+                                    │  Whisper (STT) │ GPT-4o │ TTS      │
+                                    └─────────────────────────────────────┘
 ```
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- OpenAI API Key
-
-### 1. Clone and Setup
-
-```bash
-git clone https://github.com/nicholascpark/Claims-Handler-Agent-v1.git
-cd Claims-Handler-Agent-v1
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Install frontend dependencies
-cd web && npm install && cd ..
-```
-
-### 2. Configure Environment
-
-```bash
-cp .env.example .env
-# Edit .env and add your OpenAI API key
-```
-
-Required environment variables:
-
-```bash
-OPENAI_API_KEY=sk-your-openai-api-key
-```
-
-Optional configuration:
-
-```bash
-# Model Settings
-OPENAI_MODEL=gpt-4o
-OPENAI_TEMPERATURE=0.7
-OPENAI_MAX_TOKENS=1000
-
-# Voice Settings
-STT_MODEL=whisper-1
-TTS_MODEL=tts-1
-TTS_VOICE=nova
-
-# Language
-DEFAULT_LANGUAGE=en  # en, es, fr
-
-# Server
-HOST=0.0.0.0
-PORT=8000
-```
-
-### 3. Run the Application
-
-**Start the Backend:**
-
-```bash
-python run.py
-# Server runs at http://localhost:8000
-```
-
-**Start the Frontend (separate terminal):**
-
-```bash
-cd web
-npm run dev
-# Frontend runs at http://localhost:5173
-```
-
-### 4. Use the Application
-
-1. Open http://localhost:5173 in your browser
-2. Allow microphone access when prompted
-3. Click the microphone button to start speaking
-4. Describe your insurance claim naturally
-5. Watch as the AI extracts claim details in real-time
 
 ## API Endpoints
 
+### Form Configuration
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/chat/start` | POST | Start new conversation, get greeting |
+| `/api/forms` | GET | List all form configurations |
+| `/api/forms` | POST | Create new form configuration |
+| `/api/forms/{id}` | GET | Get form by ID |
+| `/api/forms/{id}` | PUT | Update form configuration |
+| `/api/forms/{id}` | DELETE | Delete form |
+| `/api/forms/templates` | GET | Get industry templates |
+| `/api/forms/meta/field-types` | GET | Available field types |
+| `/api/forms/meta/industries` | GET | Supported industries |
+
+### Settings & Cost
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/settings/api-key` | POST | Set OpenAI API key |
+| `/api/settings/api-key/test` | POST | Test API key validity |
+| `/api/settings/api-key/status` | GET | Check if key is configured |
+| `/api/settings/cost-estimate` | POST | Estimate conversation cost |
+| `/api/settings/pricing` | GET | Current pricing info |
+
+### Conversation
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/chat/start` | POST | Start new conversation |
 | `/api/chat/message` | POST | Send text message |
-| `/api/chat/voice` | POST | Send voice message (base64 audio) |
-| `/api/chat/{thread_id}/payload` | GET | Get extracted claim data |
+| `/api/chat/voice` | POST | Send voice message |
+| `/api/chat/{thread_id}/payload` | GET | Get extracted data |
 | `/api/chat/{thread_id}/history` | GET | Get conversation history |
-| `/api/chat/{thread_id}` | DELETE | Reset conversation |
-| `/api/health` | GET | Health check |
 
 ## Project Structure
 
 ```
 Claims-Handler-Agent-v1/
-├── app/                      # Backend application
+├── app/                          # Backend (FastAPI)
 │   ├── api/
-│   │   ├── main.py          # FastAPI app factory
+│   │   ├── main.py              # App factory
 │   │   └── routes/
-│   │       ├── chat.py      # Chat endpoints
-│   │       └── health.py    # Health endpoints
+│   │       ├── chat.py          # Conversation endpoints
+│   │       ├── forms.py         # Form CRUD
+│   │       ├── settings.py      # API key & cost
+│   │       └── health.py        # Health checks
 │   ├── agents/
-│   │   ├── fnol_agent.py    # LangGraph FNOL agent
-│   │   ├── prompts.py       # Multi-language prompts
-│   │   └── tools.py         # Agent tools
-│   ├── core/
-│   │   └── config.py        # Settings management
+│   │   ├── dynamic_agent.py     # Config-driven agent
+│   │   ├── prompt_generator.py  # Dynamic prompt generation
+│   │   └── schema_generator.py  # Dynamic Pydantic schemas
 │   ├── models/
-│   │   ├── claim.py         # FNOL data models
-│   │   └── conversation.py  # Conversation models
+│   │   ├── form_config.py       # Form configuration models
+│   │   └── templates.py         # Industry templates
 │   └── services/
-│       ├── llm/             # OpenAI LLM service
-│       ├── voice/           # STT/TTS services
-│       └── persistence/     # Database service
-├── web/                      # Frontend application
+│       ├── cost_tracker.py      # Usage & cost tracking
+│       ├── llm/                 # OpenAI LLM service
+│       ├── voice/               # STT/TTS services
+│       └── persistence/         # Database
+├── web/                          # Frontend (React + TypeScript)
 │   ├── src/
-│   │   ├── components/      # React components
-│   │   ├── hooks/           # Custom hooks
-│   │   ├── services/        # API client
-│   │   └── types/           # TypeScript types
-│   └── public/              # Static assets
-├── .env.example             # Environment template
-├── requirements.txt         # Python dependencies
-├── run.py                   # Server startup script
-└── README.md
+│   │   ├── pages/
+│   │   │   ├── Landing.tsx      # Homepage
+│   │   │   ├── Builder.tsx      # 4-step wizard
+│   │   │   └── Test.tsx         # Test conversations
+│   │   ├── components/builder/  # Builder components
+│   │   ├── stores/              # Zustand state
+│   │   └── api/                 # API client
+│   ├── Dockerfile               # Frontend container
+│   └── nginx.conf               # Production nginx
+├── docker-compose.yml           # One-command startup
+├── Dockerfile                   # Backend container
+├── requirements.txt             # Python deps
+└── .env.example                 # Environment template
 ```
 
-## Claim Data Extracted
+## Technology Stack
 
-The agent extracts the following FNOL information:
+- **Backend**: Python 3.10+, FastAPI, LangGraph, [trustcall](https://github.com/hinthornw/trustcall)
+- **Frontend**: React 18, TypeScript, Tailwind CSS, Zustand, dnd-kit
+- **AI**: OpenAI GPT-4o, Whisper, TTS
+- **Infrastructure**: Docker, nginx
 
-- **Incident Date & Time**: When the incident occurred
-- **Incident Location**: Where it happened (address, city, state)
-- **Vehicle Information**: Make, model, year, license plate
-- **Damage Description**: Details of damage sustained
-- **Injury Information**: Any injuries reported
-- **Police Report**: Whether police were involved, report number
-- **Other Party Info**: Information about other parties involved
-
-## Development
-
-### Backend Development
+## Environment Variables
 
 ```bash
-# Run with hot reload
-uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+# Required
+OPENAI_API_KEY=sk-your-openai-api-key
+
+# Optional
+OPENAI_MODEL=gpt-4o              # LLM model
+OPENAI_TEMPERATURE=0.7           # Response creativity
+TTS_MODEL=tts-1                  # Text-to-speech model
+TTS_VOICE=nova                   # Voice (alloy, echo, fable, onyx, nova, shimmer)
+DEFAULT_LANGUAGE=en              # en, es, fr
+HOST=0.0.0.0                     # Server host
+PORT=8000                        # Server port
 ```
-
-### Frontend Development
-
-```bash
-cd web
-npm run dev
-```
-
-### Build for Production
-
-```bash
-# Build frontend
-cd web && npm run build
-
-# The backend can serve the built frontend from web/dist
-```
-
-## Supported Languages
-
-| Code | Language |
-|------|----------|
-| `en` | English |
-| `es` | Spanish (Espa-ol) |
-| `fr` | French (Francais) |
 
 ## Troubleshooting
 
+**Docker issues?**
+- Ensure Docker and Docker Compose are installed
+- Check port availability (3000, 8000)
+- Run `docker-compose logs` for error details
+
+**API key errors?**
+- Verify OPENAI_API_KEY is set correctly in .env
+- Ensure key has access to gpt-4o, whisper-1, tts-1
+- Check API credits/billing
+
 **Microphone not working?**
-- Ensure browser has microphone permissions
-- Check if another application is using the microphone
-- Try refreshing the page
-
-**API errors?**
-- Verify `OPENAI_API_KEY` is set correctly
-- Check API key has access to required models (gpt-4o, whisper-1, tts-1)
-- Ensure sufficient API credits
-
-**Audio playback issues?**
-- Check browser audio permissions
-- Some browsers block auto-play - click to interact first
+- Allow browser microphone permissions
+- Use HTTPS in production (required for mic access)
+- Check browser console for errors
 
 ## License
 
@@ -227,4 +244,4 @@ MIT License
 
 ---
 
-Built with LangGraph, OpenAI, FastAPI, and React.
+Built with [LangGraph](https://github.com/langchain-ai/langgraph), [trustcall](https://github.com/hinthornw/trustcall), [OpenAI](https://openai.com), and [FastAPI](https://fastapi.tiangolo.com).

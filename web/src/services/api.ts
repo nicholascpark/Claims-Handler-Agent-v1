@@ -3,10 +3,11 @@ import { ChatResponse } from '../types';
 const API_BASE = '/api';
 
 export const api = {
-  startChat: async (): Promise<ChatResponse> => {
+  startChat: async (formId?: string): Promise<ChatResponse> => {
     const response = await fetch(`${API_BASE}/chat/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form_id: formId })
     });
     if (!response.ok) throw new Error('Failed to start chat');
     return response.json();
